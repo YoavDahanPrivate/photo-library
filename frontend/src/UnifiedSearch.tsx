@@ -14,6 +14,8 @@ const emptyParts: Record<string, string> = {};
 export default function UnifiedSearch({
   people,
   sources,
+  sourceSelection,
+  onSourceChange,
   expression,
   onApply,
   query,
@@ -22,6 +24,8 @@ export default function UnifiedSearch({
 }: {
   people: Person[];
   sources: Source[];
+  sourceSelection: string[];
+  onSourceChange: (sources:string[])=>void;
   expression: string;
   onApply: (value: string) => void;
   query: string;
@@ -48,7 +52,6 @@ export default function UnifiedSearch({
   const [dates, setDates] = useState({ from: "", until: "" });
   const [albumQuery, setAlbumQuery] = useState("");
   const [albums, setAlbums] = useState<string[]>([]);
-  const [phones, setPhones] = useState<string[] | null>(null);
   const [kind, setKind] = useState("");
   const [orientation, setOrientation] = useState("");
   const [mapResults, setMapResults] = useState({
@@ -121,7 +124,6 @@ export default function UnifiedSearch({
     setMapGeneration(n=>n+1);
     setDates({ from: "", until: "" });
     setAlbums([]);
-    setPhones(null);
     setKind("");
     setOrientation("");
   }
@@ -286,44 +288,16 @@ export default function UnifiedSearch({
             <p>Find your people, places and shared memories.</p>
           </div>
         </div>
-        <section className="device-strip" aria-label="Search devices">
-          <strong>Search devices</strong>
+        <section className="device-strip" aria-label="Search sources">
+          <strong>Search sources</strong>
           <div className="device-buttons">
-            <button
-              aria-pressed={phones === null}
-              onClick={() => {
-                setPhones(null);
-                update("phones", "");
-              }}
-            >
-              All phones
-            </button>
-            {phoneNames.map((phone) => (
-              <button
-                key={phone}
-                aria-pressed={phones === null || phones.includes(phone)}
-                onClick={() => {
-                  const next = toggle(
-                    phones === null ? phoneNames : phones,
-                    phone,
-                  );
-                  setPhones(next);
-                  update(
-                    "phones",
-                    next.length
-                      ? joinOr(next.map((p) => `Phone(${quote(p)})`))
-                      : '(Phone("") and not Phone(""))',
-                  );
-                }}
-              >
-                {phone}
-              </button>
-            ))}
+            <button aria-pressed={phoneNames.length>0&&phoneNames.every(name=>sourceSelection.includes(name))} disabled={!phoneNames.length} onClick={()=>onSourceChange(phoneNames.every(name=>sourceSelection.includes(name))?[]:phoneNames)}>All</button>
+            {phoneNames.map(name=><button key={name} aria-pressed={sourceSelection.includes(name)} onClick={()=>onSourceChange(toggle(sourceSelection,name))}>{name}</button>)}
           </div>
         </section>
         <p className="small-note master-help">
-          Build a search below or type an expression. Changes apply only when
-          you press Enter or Search.
+          Source selections apply immediately. Apply search text and helper changes
+          with Enter or Search.
         </p>
         <div className="master-search-row">
           <form

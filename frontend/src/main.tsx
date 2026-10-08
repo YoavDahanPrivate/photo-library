@@ -200,6 +200,7 @@ function App() {
   const [sources, setSources] = useState<Source[]>([]),
     [scope, setScope] = useState<string[]>([]),
     [albums, setAlbums] = useState<string[]>([]);
+  const [sourcesReady,setSourcesReady]=useState(false);
   const [sheet, setSheet] = useState(false),
     [kind, setKind] = useState(""),
     [orientation, setOrientation] = useState(""),
@@ -248,7 +249,7 @@ function App() {
         let saved: string[] | null = null;
         try {
           const value = JSON.parse(
-            localStorage.getItem("dahan.phones.v1") || "null",
+            localStorage.getItem("dahan.sources.v1") ?? localStorage.getItem("dahan.phones.v1") ?? "null",
           );
           if (Array.isArray(value) && value.every((v) => typeof v === "string"))
             saved = value;
@@ -256,6 +257,7 @@ function App() {
         setScope(
           saved ? saved.filter((v) => available.includes(v)) : available,
         );
+        setSourcesReady(true);
       })
       .catch((e) => setError(e.message));
     const update = () =>
@@ -296,12 +298,12 @@ function App() {
     if (page === "people" && group === null) setRevision((v) => v + 1);
   }, [status?.revision]);
   useEffect(() => {
-    if (sources.length) {
+    if (sourcesReady) {
       try {
-        localStorage.setItem("dahan.phones.v1", JSON.stringify(scope));
+        localStorage.setItem("dahan.sources.v1", JSON.stringify(scope));
       } catch {}
     }
-  }, [scope, sources]);
+  }, [scope, sourcesReady]);
   useEffect(() => {
     if (group !== null)
       setPersonName(
@@ -860,9 +862,9 @@ function App() {
         {settingsOpen ? <SyncSettings onPeopleChanged={()=>setRevision(v=>v+1)} onClose={() => setSettingsOpen(false)} hideFormatDuplicates={hideFormatDuplicates} onHideFormatDuplicates={setHideFormatDuplicates} /> : page === "library" ? (
           <>
             {backToSearch&&<button className="back-to-search" onClick={()=>{const pane=document.querySelector<HTMLElement>("main.library-workspace-page");pane?.scrollTo({top:0,behavior:window.matchMedia("(prefers-reduced-motion:reduce)").matches?"auto":"smooth"});}}>↑ Back to search</button>}
-            <UnifiedSearch resultsLoading={resultsLoading} people={people} sources={sources} expression={expression} query={query().toString()} onApply={(value) => {
+            <UnifiedSearch sourceSelection={scope} onSourceChange={(selected)=>{setResultsLoading(true);setScope(selected);}} resultsLoading={resultsLoading} people={people} sources={sources} expression={expression} query={query().toString()} onApply={(value) => {
               setResultsLoading(true);
-              setScope(phoneNames);setAlbums([]);setGeo(emptyGeo);setQ("");setPeopleFilter([]);setStart("");setEnd("");setKind("");setOrientation("");setExpression(value);
+              if(!value.trim())setScope(phoneNames);setAlbums([]);setGeo(emptyGeo);setQ("");setPeopleFilter([]);setStart("");setEnd("");setKind("");setOrientation("");setExpression(value);
             }}>
               {(mediaControl)=><>
               <div className="gallery-controls" aria-label="Gallery display controls">
@@ -908,8 +910,8 @@ function App() {
                   <h2>No moments in this view</h2>
                   <p>
                     {scope.length
-                      ? "Try another phone, album, or date."
-                      : "Choose at least one phone to browse."}
+                      ? "Try another source, album, or date."
+                      : "Choose at least one source to browse."}
                   </p>
                   <button className="primary" onClick={reset}>
                     Show all files
