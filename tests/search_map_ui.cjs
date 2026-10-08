@@ -1,0 +1,27 @@
+const assert=require('node:assert/strict');
+const {searchSuggestions,acceptSuggestion}=require('../qa-search-map/searchSuggestions.js');
+const {countryAnchor,zoomToRectangle}=require('../qa-search-map/mapGeometry.js');
+const items=[{label:'Maya Smith',value:'Maya Smith',kind:'Person'},{label:'United States',value:'country:USA',kind:'Country',aliases:['USA','US']},{label:'Paris · France',value:'city:1',kind:'City',aliases:['Paris']},{label:'iPhone',value:'iPhone',kind:'Device'}];
+let s=searchSuggestions('USA',3,items).find(s=>s.kind==='Country');assert.equal(acceptSuggestion('USA',s).value,'Place("country:USA")');
+let query='Includes("Ma") and Place("USA")',pos=query.indexOf('Ma')+2;
+s=searchSuggestions(query,pos,items)[0];assert.equal(s.kind,'Person');assert.equal(acceptSuggestion(query,s).value,'Includes("Maya Smith") and Place("USA")');
+query='Place("US") and Includes("Maya Smith")';pos=query.indexOf('US')+2;s=searchSuggestions(query,pos,items)[0];assert.equal(s.kind,'Country');assert.equal(acceptSuggestion(query,s).value,'Place("country:USA") and Includes("Maya Smith")');
+s=searchSuggestions('Pl',2,items).find(s=>s.kind==='Command');assert.deepEqual(acceptSuggestion('Pl',s),{value:'Place("")',cursor:7});
+assert(searchSuggestions('Phone("i',8,items).every(s=>s.kind==='Device'));
+assert(searchSuggestions('Includes("Maya Smith" and "Ma',28,items).every(s=>s.kind==='Person'));
+assert(searchSuggestions('Place("USA") ',13,items).every(s=>s.kind==='Operator'));
+assert.equal(searchSuggestions('Area("0,1',9,items).length,0);
+const box=zoomToRectangle({south:10,north:20,west:5,east:10},500);assert.equal(box.lat,15);assert.equal(box.lon,7.5);assert.equal(box.span,21.6);
+const square=[[[[0,0],[10,0],[10,10],[0,10],[0,0]]]];
+assert.deepEqual(countryAnchor(square,{lon:8,lat:8,span:1},500,{lon:2,lat:2}),{lon:8,lat:8});
+assert.equal(countryAnchor(square,{lon:20,lat:20,span:1},500,{lon:2,lat:2}),null);
+const hole=[...square[0],[[7,7],[9,7],[9,9],[7,9],[7,7]]];
+assert.equal(countryAnchor([hole],{lon:8,lat:8,span:.5},500,{lon:2,lat:2}),null);
+console.log('PASS: cursor replacement, command caret, context filtering, aliases, operators, rectangle fit, close-zoom country anchors and holes');
+
+const devices=[{label:'All phones',value:'__all_phones__',kind:'Device',aliases:['All Phone']},{label:'Yoav14ProMax',value:'Yoav14ProMax',kind:'Device'},{label:'Hila Dahan',value:'Hila Dahan',kind:'Person'}];
+let deviceSuggestion=searchSuggestions('Yoav 14',7,devices).find(s=>s.kind==='Device');assert.equal(acceptSuggestion('Yoav 14',deviceSuggestion).value,'Phone("Yoav14ProMax")');
+deviceSuggestion=searchSuggestions('All Phone',9,devices).find(s=>s.kind==='Device');assert.equal(acceptSuggestion('All Phone',deviceSuggestion).value,'AllPhones()');
+const mixed='Yoav 14 and Hila Dahan and after 2025';deviceSuggestion=searchSuggestions(mixed,7,devices).find(s=>s.kind==='Device');assert.equal(acceptSuggestion(mixed,deviceSuggestion).value,'Phone("Yoav14ProMax") and Hila Dahan and after 2025');
+assert(searchSuggestions('Phone("',7,devices).every(s=>s.insert!=='"__all_phones__"'));
+console.log('PASS: spaced device autocomplete, all phones, compound replacement');

@@ -1,0 +1,17 @@
+import {useEffect,useRef,useState} from "react";
+import {Download,X,Share2} from "lucide-react";
+export default function SaveMedia({id,name,kind,onOpenChange}:{id:string;name:string;kind:string;onOpenChange:(open:boolean)=>void}){
+ const [open,setOpen]=useState(false),[busy,setBusy]=useState(false),[file,setFile]=useState<File|null>(null),[message,setMessage]=useState("");
+ const controller=useRef<AbortController|null>(null);
+ useEffect(()=>()=>controller.current?.abort(),[]);
+ const change=(value:boolean)=>{setOpen(value);onOpenChange(value);};
+ const original='/api/media/'+id+'/original?download=true',display='/api/media/'+id+(kind==='photo'?'/display-original':'/original');
+ const supported=typeof navigator.share==='function'&&typeof navigator.canShare==='function'&&window.isSecureContext;
+ const prepare=async()=>{setBusy(true);setMessage("");controller.current?.abort();const abort=new AbortController();controller.current=abort;try{const r=await fetch(display,{signal:abort.signal});if(!r.ok)throw Error('Could not prepare this file');if(Number(r.headers.get('content-length'))>128*1024*1024)throw Error('This file is large. Use Download original, then share it from Files.');const blob=await r.blob();const extension=({'image/jpeg':'.jpg','image/png':'.png','image/webp':'.webp','image/gif':'.gif','image/avif':'.avif'} as {[mime:string]:string})[blob.type];const next=new File([blob],kind==='photo'&&extension?name.replace(/\.[^.]+$/,extension):name,{type:blob.type||(kind==='photo'?'image/jpeg':'video/mp4')});if(!navigator.canShare({files:[next]}))throw Error('This file cannot be shared here. Use the options below.');setFile(next);}catch(e){if(!abort.signal.aborted)setMessage(String(e));}finally{if(!abort.signal.aborted)setBusy(false);}};
+ return <><a className="desktop-download" href={original} download={name} aria-label="Download original" title="Download original"><Download/></a><button className="mobile-save" type="button" aria-label="Save or download" title="Save or download" onClick={()=>change(true)}><Download/></button>
+ {open&&<div className="save-media-sheet" role="dialog" aria-label="Save photo or video"><header><strong>Save {kind==='photo'?'photo':'video'}</strong><button aria-label="Close save options" onClick={()=>change(false)}><X/></button></header>
+ <p>To save in Photos, choose Save Image or Save Video from the iPhone share sheet when offered.</p>
+ {supported&&(file?<button onClick={()=>{void navigator.share({files:[file]}).then(()=>setMessage('Share sheet closed.')).catch(e=>{if(e.name!=='AbortError')setMessage('Sharing is unavailable. Use Open or Download below.');});}}><Share2/>Open share sheet</button>:<button disabled={busy} onClick={()=>void prepare()}>{busy?'Preparing file…':'Prepare for Photos / sharing'}</button>)}
+ {kind==='photo'&&<><a href={display} target="_blank" rel="noreferrer">Open photo to save</a><p>Touch and hold the opened photo, then choose Save to Photos / Save Image. This opens the full-resolution photo in a browser-compatible format.</p></>}
+ <a href={original} download={name}>Download original</a><p>Alternative: open the download in Files, tap Share, and choose Save Image / Save Video if available.</p>{message&&<p role="status">{message}</p>}</div>}</>;
+}

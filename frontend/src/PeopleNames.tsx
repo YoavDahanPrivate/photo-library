@@ -1,0 +1,13 @@
+import {useEffect,useState} from "react";
+type Record={id:number;name:string;faces:number;cover:string|null;conflict:boolean};
+export default function PeopleNames({onChanged}:{onChanged:()=>void}){
+ const [records,setRecords]=useState<Record[]>([]),[query,setQuery]=useState(""),[all,setAll]=useState(false),[names,setNames]=useState<{[id:number]:string}>({}),[busy,setBusy]=useState(false),[message,setMessage]=useState("");
+ const refresh=async()=>{const r=await fetch('/api/people-name-records');if(!r.ok)throw Error('Could not load saved names');setRecords(await r.json());};
+ useEffect(()=>{void refresh().catch(e=>setMessage(String(e)));},[]);
+ const action=async(path:string,body={})=>{setBusy(true);setMessage("");try{const r=await fetch('/api/'+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await r.json();if(!r.ok)throw Error(data.detail||'Could not update name');await refresh();onChanged();setMessage('Saved. Use Undo last change if needed.');}catch(e){setMessage(String(e));}finally{setBusy(false);}};
+ return <section className="people-name-tools" aria-label="People names"><h2>People names</h2><p>Review duplicate names, including empty records hidden from the People gallery. Rename different people to distinguish them. Clearing an unused name changes no face assignments.</p>
+ <div className="sync-actions"><input aria-label="Find saved names" placeholder="Find a name" value={query} onChange={e=>setQuery(e.target.value)}/><label><input type="checkbox" checked={all} onChange={e=>setAll(e.target.checked)}/>Show all saved names</label><button disabled={busy} onClick={()=>void action('undo')}>Undo last library change</button></div>
+ {message&&<p role="status">{message}</p>}
+ {records.filter(r=>(all||r.conflict)&&r.name.toLowerCase().includes(query.toLowerCase())).map(r=><article key={r.id} className="name-record">{r.cover&&<img src={'/api/faces/'+r.cover+'/thumbnail'} alt={'Face example for '+r.name}/>}<div><strong>{r.name} · #{r.id}</strong><p>{r.faces.toLocaleString()} faces{r.conflict?' · Duplicate name':''}</p><input aria-label={'New name for record '+r.id} value={names[r.id]??r.name} onChange={e=>setNames({...names,[r.id]:e.target.value})}/><button disabled={busy||!names[r.id]?.trim()||names[r.id]===r.name} onClick={()=>void action('people/'+r.id+'/name',{name:names[r.id]})}>Rename</button>{r.faces===0&&<button disabled={busy} onClick={()=>void action('people/'+r.id+'/clear-unused-name')}>Clear unused name</button>}</div></article>)}
+ {!records.some(r=>r.conflict)&&!all&&<p>No duplicate names found.</p>}</section>;
+}
