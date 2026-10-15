@@ -11,6 +11,7 @@ def photo_response(row):
     if row['kind']!='photo':raise HTTPException(400,'Not a photo')
     try:path=core.original(row)
     except ValueError:raise HTTPException(403,'Invalid source')
+    except (RuntimeError,OSError):raise HTTPException(503,'Network source unavailable or saved access needs updating') from None
     if not path.is_file():raise HTTPException(404,'Original source is offline or missing')
     if path.suffix.lower() in ('.jpg','.jpeg','.png','.webp','.gif','.avif'):
         return FileResponse(path,headers={'Cache-Control':'private, max-age=3600'})

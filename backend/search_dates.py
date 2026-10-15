@@ -38,9 +38,10 @@ def period(value):
 
 def comparison(op, bounds):
     low,high = bounds
-    field = 'substr(m.taken,1,10)'
+    from .metadata_support import DATE_LOW, DATE_HIGH
+    field = DATE_LOW if op in ('>','<=') else DATE_HIGH
     if op in ('=', '!='):
-        sql = f'coalesce(({field} >= ? AND {field} <= ?),0)'
-        return (f'coalesce(NOT ({field} >= ? AND {field} <= ?),0)' if op=='!=' else sql), [low,high]
+        sql = f'coalesce(({DATE_HIGH} >= ? AND {DATE_LOW} <= ?),0)'
+        return (f'coalesce(NOT ({DATE_HIGH} >= ? AND {DATE_LOW} <= ?),0)' if op=='!=' else sql), [low,high]
     edge = high if op in ('>','<=') else low
     return f'coalesce({field} {op} ?,0)', [edge]

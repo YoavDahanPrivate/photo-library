@@ -1,3 +1,4 @@
+from .source_management import VISIBLE
 """Reevaluation uses frozen saved exemplars, never its own new predictions."""
 
 import json
@@ -7,6 +8,12 @@ from pydantic import BaseModel, Field
 from .core import db
 
 router = APIRouter(prefix="/api/people")
+
+from .bulk_review import ApprovalBatch, approve_batch
+
+router.add_api_route("/approve-suggestions", approve_batch, methods=["POST"])
+from .people_jobs import router as operations_router
+router.include_router(operations_router)
 
 
 class Rejection(BaseModel):
@@ -89,7 +96,7 @@ def suggestions():
         return [
             dict(r)
             for r in c.execute(
-                "SELECT s.*,CASE WHEN EXISTS(SELECT 1 FROM high_confidence_faces h WHERE h.face_id=s.face_id) THEN 'high' ELSE 'lower' END AS confidence,p.name,f.media_id,f.person_id AS source_person_id FROM face_suggestions s JOIN people p ON p.id=s.person_id JOIN faces f ON f.id=s.face_id LEFT JOIN people current_person ON current_person.id=f.person_id WHERE f.status!='dismissed' AND trim(coalesce(current_person.name,''))='' AND trim(coalesce(p.name,''))!='' ORDER BY s.score DESC,s.face_id"
+                f"SELECT s.*,CASE WHEN EXISTS(SELECT 1 FROM high_confidence_faces h WHERE h.face_id=s.face_id) THEN 'high' ELSE 'lower' END AS confidence,p.name,f.media_id,f.person_id AS source_person_id FROM face_suggestions s JOIN people p ON p.id=s.person_id JOIN faces f ON f.id=s.face_id LEFT JOIN people current_person ON current_person.id=f.person_id WHERE f.status!='dismissed' AND trim(coalesce(current_person.name,''))='' AND trim(coalesce(p.name,''))!='' AND EXISTS(SELECT 1 FROM media m WHERE m.id=f.media_id AND {VISIBLE}) ORDER BY s.score DESC,s.face_id"
             )
         ]
 
@@ -103,15 +110,22 @@ def vector(blob):
 
 
 @router.post("/reevaluate")
-def reevaluate():
+def reevaluate_request():
+    return reevaluate()
+
+
+def reevaluate(progress=lambda *args, **kwargs: None):
     # Score outside a write transaction so the library remains usable during a large pass.
+    progress("Reading saved faces")
     with db() as c:
         revision=c.execute("SELECT coalesce(max(id),0),coalesce(sum(undone),0) FROM actions").fetchone()
         revision=tuple(revision)
-        rows=c.execute("SELECT f.*,p.name FROM faces f LEFT JOIN people p ON p.id=f.person_id WHERE f.status!='dismissed' AND EXISTS(SELECT 1 FROM media m WHERE m.id=f.media_id AND m.status='ready')").fetchall()
+        rows=c.execute("SELECT f.id,f.media_id,f.person_id,f.status,f.embedding,p.name FROM faces f LEFT JOIN people p ON p.id=f.person_id WHERE f.status!='dismissed' AND EXISTS(SELECT 1 FROM media m WHERE m.id=f.media_id AND m.status='ready')").fetchall()
         rejected={(r[0],r[1]) for r in c.execute("SELECT face_id,person_id FROM face_rejections")}
     saved={};candidates=[]
-    for row in rows:
+    progress("Preparing face references", 0, len(rows), "faces")
+    for index,row in enumerate(rows):
+        if index % 256 == 0: progress("Preparing face references", index, len(rows), "faces")
         v=vector(row["embedding"])
         if v is None: continue
         if (row["name"] or "").strip():
@@ -120,6 +134,9 @@ def reevaluate():
         else: candidates.append((row,v))
     groups=[(person,np.stack([v for v,_ in refs]),np.asarray([mid for _,mid in refs])) for person,refs in saved.items()]
     plans=[]
+    comparisons=0
+    total_comparisons=len(candidates)*sum(len(refs) for _,refs,_ in groups)
+    progress("Comparing faces", 0, total_comparisons, "comparisons")
     for offset in range(0,len(candidates),128):
         batch=candidates[offset:offset+128]
         matrix=np.stack([v for _,v in batch])
@@ -129,6 +146,8 @@ def reevaluate():
             support=[set() for _ in batch]
             for start in range(0,len(refs),512):
                 scores=matrix @ refs[start:start+512].T
+                comparisons+=len(batch)*len(refs[start:start+512])
+                progress("Comparing faces", comparisons, total_comparisons, "comparisons")
                 best=np.maximum(best,scores.max(axis=1))
                 mids=media_ids[start:start+512]
                 for i,(row,_) in enumerate(batch):
@@ -142,10 +161,12 @@ def reevaluate():
             margin=score-(scores[1][0] if len(scores)>1 else 0)
             if (row["id"],person) in rejected or score<0.55 or margin<0.06: continue
             plans.append((row["id"],person,score,margin,score>=0.70 and margin>=0.12 and support>=2))
+    progress("Saving suggestions")
     with db() as c:
         c.execute("BEGIN IMMEDIATE")
         if tuple(c.execute("SELECT coalesce(max(id),0),coalesce(sum(undone),0) FROM actions").fetchone())!=revision:
             raise HTTPException(409,"Face corrections changed during matching. Please retry.")
+        progress("Saving suggestions")
         c.execute("DELETE FROM face_suggestions")
         c.execute("DELETE FROM high_confidence_faces")
         c.executemany("INSERT INTO face_suggestions VALUES(?,?,?,?)",[p[:4] for p in plans])
@@ -195,4 +216,4 @@ def group_match(group_id: int):
 @router.get("/review/approved")
 def approved_reviews():
     with db() as c:
-        return [dict(r) for r in c.execute("SELECT a.face_id,a.person_id,p.name FROM review_approvals a JOIN faces f ON f.id=a.face_id JOIN people p ON p.id=a.person_id WHERE f.person_id=a.person_id AND f.status='manual' ORDER BY a.created DESC,a.face_id LIMIT 2000")]
+        return [dict(r) for r in c.execute(f"SELECT a.face_id,a.person_id,p.name FROM review_approvals a JOIN faces f ON f.id=a.face_id JOIN people p ON p.id=a.person_id WHERE f.person_id=a.person_id AND f.status='manual' AND EXISTS(SELECT 1 FROM media m WHERE m.id=f.media_id AND {VISIBLE}) ORDER BY a.created DESC,a.face_id LIMIT 2000")]

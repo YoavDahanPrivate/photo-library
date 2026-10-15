@@ -31,6 +31,7 @@ export type Rectangle = {
 export type GeoSelection = {
   places: string[];
   unknown: boolean;
+  no_gps?:boolean;
   includes: Rectangle[];
   excludes: Rectangle[];
 };
@@ -41,10 +42,10 @@ export const emptyGeo: GeoSelection = {
   excludes: [],
 };
 export const hasGeo = (g: GeoSelection) =>
-  !!(g.places.length || g.unknown || g.includes.length || g.excludes.length);
+  !!(g.places.length || g.unknown || g.no_gps || g.includes.length || g.excludes.length);
 export const locationLabel = (g: GeoSelection) =>
   hasGeo(g)
-    ? `${g.places.length + g.includes.length + +g.unknown} included · ${g.excludes.length} excluded`
+    ? `${g.places.length + g.includes.length + +g.unknown + +(g.no_gps||false)} included · ${g.excludes.length} excluded`
     : "Any location";
 type Point = {
   latitude: number;
@@ -53,6 +54,7 @@ type Point = {
   city: string | null;
   country: string | null;
   cover: string;
+  manual_count?:number;
 };
 type MapResults = {
   points: Point[];
@@ -935,8 +937,9 @@ export function GeoMap({
               key={key}
               data-cluster={key}
               style={{ left: `${x / 10}%`, top: `${y / mapHeight * 100}%` }}
+              title={`${count} moments · ${points.reduce((s,p)=>s+(p.manual_count||0),0)} manually located`}
               onClick={() => markerClick(points)}
-              aria-label={`${points.length > 1 || mode === "pan" ? "Zoom to" : "Select"} ${count} moments${points.length === 1 && points[0].city ? " near " + points[0].city : ""}`}
+              aria-label={`${points.length > 1 || mode === "pan" ? "Zoom to" : "Select"} ${count} moments${points.length === 1 && points[0].city ? " near " + points[0].city : ""} · ${points.reduce((s,p)=>s+(p.manual_count||0),0)} manually located`}
             >
               {count}
             </button>
@@ -1038,8 +1041,8 @@ export function GeoMap({
       </details>
       {message && <p className="map-feedback" role="status">{message}</p>}
       <p className="geo-map-note">
-        Country overview, not street detail. All {results.unknown} unlocated
-        results remain in the gallery unless geography excludes them.{" "}
+        Country overview, not street detail. All {results.unknown} results without GPS
+        coordinates remain in the gallery unless geography excludes them.{" "}
         <a
           href="https://www.naturalearthdata.com/"
           target="_blank"

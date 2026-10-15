@@ -1,4 +1,4 @@
-import json, threading, os
+import json, threading, os, sqlite3, logging
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 from ipaddress import IPv4Address
@@ -10,7 +10,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from .core import DATA, PHONES, db, init, original
 
-init()
+from . import storage_runtime
+storage_runtime.initialize(force=True)
 from contextlib import asynccontextmanager
 from . import sync_service
 
@@ -20,6 +21,8 @@ async def lifespan(app):
     try:
         with sync_service.scan_lock(): duplicates.recover()
     except RuntimeError: pass
+    except (OSError,sqlite3.Error):
+        logging.getLogger(__name__).exception("Storage unavailable during startup recovery")
     sync_service.start_scheduler()
     try:
         yield
@@ -27,7 +30,36 @@ async def lifespan(app):
         sync_service.stop_scheduler()
 
 app = FastAPI(title="Dahan Photo Library prototype", lifespan=lifespan)
+@app.exception_handler(sqlite3.Error)
+async def catalogue_error(request: Request, error: sqlite3.Error):
+    logging.getLogger(__name__).exception("Catalogue request failed", exc_info=error)
+    code=getattr(error,"sqlite_errorcode",0) & 255
+    unavailable=code in (sqlite3.SQLITE_IOERR,sqlite3.SQLITE_CANTOPEN,sqlite3.SQLITE_READONLY,sqlite3.SQLITE_FULL,sqlite3.SQLITE_BUSY,sqlite3.SQLITE_LOCKED) or any(word in str(error).lower() for word in ("disk i/o", "unable to open", "readonly", "database is locked"))
+    detail=("Library storage is unavailable or busy. Check that the data drive is connected and writable, then retry. Saved sync checkpoints are retained." if unavailable else "The library catalogue could not be read. Check the service logs before resuming sync.")
+    return JSONResponse({"detail":detail},status_code=503 if unavailable else 500,headers={"Retry-After":"5"} if unavailable else None)
+
+@app.exception_handler(OSError)
+async def filesystem_error(request: Request, error: OSError):
+    logging.getLogger(__name__).exception("Library filesystem access failed", exc_info=error)
+    return JSONResponse({"detail":storage_runtime.DETAIL},status_code=503,headers={"Retry-After":"5"})
+
+
+@app.get("/api/health")
+def health():
+    return storage_runtime.health()
+
+
 app.include_router(sync_service.router)
+from . import source_management
+app.include_router(source_management.router)
+from . import advanced_layout
+app.include_router(advanced_layout.router)
+from . import source_discovery
+app.include_router(source_discovery.router)
+from . import folder_picker
+app.include_router(folder_picker.router)
+from . import network_access
+app.include_router(network_access.router)
 from .duplicates import router as duplicate_router
 app.include_router(duplicate_router)
 lan_address = os.environ.get("DAHAN_LAN_ADDRESS", "").strip()
@@ -40,6 +72,8 @@ allowed_origins = {
     "http://localhost:80",
     "http://127.0.0.1:80",
     "http://localhost:8765",
+    "http://localhost:8766",
+    "http://127.0.0.1:8766",
     "http://127.0.0.1:8765",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
@@ -69,6 +103,11 @@ async def trusted_hosts(request: Request, call_next):
             return JSONResponse(
                 {"detail": "Cross-origin writes disabled"}, status_code=403
             )
+    progress_request = request.url.path.startswith("/api/people/operations/") and (request.method=="GET" or request.url.path.endswith("/cancel"))
+    if request.url.path.startswith("/api/") and request.url.path != "/api/health" and not progress_request:
+        from starlette.concurrency import run_in_threadpool
+        if not await run_in_threadpool(storage_runtime.initialize):
+            return JSONResponse({"detail":storage_runtime.DETAIL},status_code=503,headers={"Retry-After":"5"})
     response = await call_next(request)
     path = request.url.path
     if path in ("/", "/index.html", "/version.json", "/manifest.webmanifest"):
@@ -83,7 +122,7 @@ def status():
     with db() as c:
         counts = {
             r["status"]: r["n"]
-            for r in c.execute("SELECT status,count(*) n FROM media GROUP BY status")
+            for r in c.execute("SELECT status,count(*) n FROM media m WHERE " + source_management.VISIBLE + " GROUP BY status")
         }
         return dict(
             total=sum(v for k,v in counts.items() if k not in ("trashed","superseded","missing")),
@@ -127,7 +166,7 @@ def sources():
         return [
             dict(r)
             for r in c.execute(
-                "SELECT phone,album,count(*) count FROM media WHERE status NOT IN ('missing','superseded','trashed') GROUP BY phone,album ORDER BY phone,album"
+                "SELECT phone,album,m.database_id,m.source_id,m.album_id,(SELECT alias FROM library_databases WHERE id=m.database_id) database_alias,count(*) count FROM media m WHERE status NOT IN ('missing','superseded','trashed') AND " + source_management.VISIBLE + " GROUP BY m.database_id,m.source_id,m.album_id,phone,album ORDER BY phone,album"
             )
         ]
 
@@ -135,6 +174,11 @@ def sources():
 def media_filters(
     request: Request,
     hide_format_duplicates: bool = False,
+    database_ids: list[str] = Query(default=[]),
+    include_child_databases: bool = False,
+    linked_source_ids: list[str] = Query(default=[]),
+    source_ids: list[str] = Query(default=[]),
+    album_ids: list[str] = Query(default=[]),
     phones: list[str] = Query(default=[]),
     albums: list[str] = Query(default=[]),
     people: list[int] = Query(default=[]),
@@ -145,7 +189,7 @@ def media_filters(
     q: str = "",
     expression: str = Query(default="", max_length=4000),
     geo: str = Query(default="", max_length=20000),
-    location: Literal["any", "known", "unknown", "bounds", "radius"] = "any",
+    location: Literal["any", "known", "unknown", "no_gps", "bounds", "radius"] = "any",
     south: float | None = Query(default=None, ge=-90, le=90),
     north: float | None = Query(default=None, ge=-90, le=90),
     west: float | None = Query(default=None, ge=-180, le=180),
@@ -154,9 +198,20 @@ def media_filters(
     longitude: float | None = Query(default=None, ge=-180, le=180),
     radius_km: float | None = Query(default=None, gt=0, le=20020),
 ):
-    clauses = ["m.status='ready'"]
+    clauses = ["m.status='ready'", source_management.VISIBLE]
     args = []
+    if database_ids and include_child_databases:
+        with db() as catalogue:
+            expanded=sorted({d['id'] for did in database_ids for d in advanced_layout.descendants(catalogue,did)})
+        if not expanded:clauses.append("0")
+        database_ids=expanded
+    if linked_source_ids:
+        clauses.append("EXISTS(SELECT 1 FROM linked_source_members lm JOIN linked_sources lg ON lg.id=lm.linked_id WHERE lm.source_id=m.source_id AND lg.visible=1 AND lm.linked_id IN ("+','.join('?' for _ in linked_source_ids)+"))")
+        args.extend(linked_source_ids)
     for col, values in [
+        ("m.database_id", database_ids),
+        ("m.source_id", source_ids),
+        ("m.album_id", album_ids),
         ("m.phone", phones),
         ("m.phone || char(31) || m.album", albums),
     ]:
@@ -173,10 +228,10 @@ def media_filters(
     if orientation == "square":
         clauses.append("m.height=m.width")
     if start:
-        clauses.append("substr(m.taken,1,10)>=?")
+        clauses.append(metadata_support.DATE_HIGH+">=?")
         args.append(start)
     if end:
-        clauses.append("substr(m.taken,1,10)<=?")
+        clauses.append(metadata_support.DATE_LOW+"<=?")
         args.append(end)
     for person in people:
         clauses.append(
@@ -228,6 +283,10 @@ def media_filters(
         return collapse_format_pairs(where,args)
     return where,args
 
+
+from . import metadata_support
+metadata_support.register_routes(media_filters)
+app.include_router(metadata_support.router)
 
 @app.get("/api/places")
 def places(filters=Depends(media_filters)):
@@ -321,6 +380,7 @@ def map_land():
 def media(
     filters=Depends(media_filters),
     order: Literal["asc", "desc"] = "desc",
+    sort_by: Literal["capture", "file"] = "capture",
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=80, ge=1, le=200),
 ):
@@ -329,15 +389,17 @@ def media(
         total = c.execute(
             "SELECT count(*) FROM media m WHERE " + where, args
         ).fetchone()[0]
+        sorting = f"m.taken IS NULL,m.taken {order.upper()},m.id" if sort_by=='capture' else f"coalesce((SELECT file_created FROM media_original_metadata om WHERE om.media_id=m.id),m.mtime) IS NULL,coalesce((SELECT file_created FROM media_original_metadata om WHERE om.media_id=m.id),m.mtime) {order.upper()},m.id"
         rows = c.execute(
-            "SELECT m.id,m.name,m.phone,m.album,m.kind,m.taken,m.width,m.height,m.duration,m.latitude,m.longitude FROM media m WHERE "
+            "SELECT m.id,m.database_id,m.source_id,m.album_id,(SELECT alias FROM library_databases WHERE id=m.database_id) database_alias,m.name,m.phone,m.album,m.kind,m.taken,m.width,m.height,m.duration,m.latitude,m.longitude FROM media m WHERE "
             + where
-            + f" ORDER BY m.taken IS NULL,m.taken {order.upper()},m.id LIMIT ? OFFSET ?",
+            + f" ORDER BY {sorting} LIMIT ? OFFSET ?",
             args + [limit, offset],
         ).fetchall()
         items = [dict(r) for r in rows]
         for item in items:
             item.update(location_details(c, item["id"]))
+            item.update(metadata_support.details(c, item["id"]))
         return dict(total=total, items=items)
 
 
@@ -370,7 +432,7 @@ def validate_search(expression: str = Query(default="", max_length=4000)):
 
 def get_media(identity):
     with db() as c:
-        row = c.execute("SELECT * FROM media WHERE id=?", (identity,)).fetchone()
+        row = c.execute("SELECT m.* FROM media m WHERE id=? AND " + source_management.VISIBLE, (identity,)).fetchone()
     if row is None:
         raise HTTPException(404, "Media not found")
     return row
@@ -382,7 +444,15 @@ def detail(identity: str):
     row.pop("path", None)
     row["metadata"] = json.loads(row["metadata"] or "{}")
     with db() as c:
+        hierarchy = c.execute("""
+            SELECT s.relative_path source_relative_path,a.relative_path album_relative_path
+            FROM library_sources s LEFT JOIN library_albums a ON a.source_id=s.id AND a.id=?
+            WHERE s.id=?
+        """, (row.get("album_id"), row.get("source_id"))).fetchone()
+        if hierarchy:
+            row.update(dict(hierarchy))
         row.update(location_details(c, identity))
+        row.update(metadata_support.details(c, identity))
         row["faces"] = [
             dict(r)
             for r in c.execute(
@@ -395,9 +465,9 @@ def detail(identity: str):
 
 
 @app.get("/api/media/{identity}/neighbors")
-def media_neighbors(identity:str,filters=Depends(media_filters),order:Literal["asc","desc"]="desc"):
+def media_neighbors(identity:str,filters=Depends(media_filters),order:Literal["asc","desc"]="desc",sort_by:Literal["capture","file"]="capture"):
     where,args=filters
-    sorting=f"m.taken IS NULL,m.taken {order.upper()},m.id"
+    sorting=f"m.taken IS NULL,m.taken {order.upper()},m.id" if sort_by=='capture' else f"coalesce((SELECT file_created FROM media_original_metadata om WHERE om.media_id=m.id),m.mtime) IS NULL,coalesce((SELECT file_created FROM media_original_metadata om WHERE om.media_id=m.id),m.mtime) {order.upper()},m.id"
     with db() as c:
         rows=c.execute(f"""WITH ranked AS (
           SELECT m.id,lag(m.id) OVER (ORDER BY {sorting}) previous,
@@ -439,6 +509,8 @@ def get_original(identity: str, download: bool = False):
         path = original(row)
     except ValueError:
         raise HTTPException(403, "Invalid source")
+    except (RuntimeError, OSError):
+        raise HTTPException(503, "Network source unavailable or saved access needs updating") from None
     if not path.is_file():
         raise HTTPException(404, "Source offline or missing")
     return FileResponse(path, filename=row["name"], content_disposition_type="attachment" if download else "inline")
@@ -509,11 +581,11 @@ def people():
         result = [
             dict(r)
             for r in c.execute(
-                "SELECT p.id,p.name,count(f.id) count,min(f.id) cover FROM people p JOIN faces f ON f.person_id=p.id WHERE f.status!='dismissed' AND EXISTS(SELECT 1 FROM media m WHERE m.id=f.media_id AND m.status='ready') AND NOT EXISTS(SELECT 1 FROM unknown_faces u WHERE u.face_id=f.id) GROUP BY p.id ORDER BY p.name IS NULL,p.name,count(f.id) DESC"
+                f"SELECT p.id,p.name,count(f.id) count,min(f.id) cover FROM people p JOIN faces f ON f.person_id=p.id WHERE f.status!='dismissed' AND EXISTS(SELECT 1 FROM media m WHERE m.id=f.media_id AND m.status='ready' AND {source_management.VISIBLE}) AND NOT EXISTS(SELECT 1 FROM unknown_faces u WHERE u.face_id=f.id) GROUP BY p.id ORDER BY p.name IS NULL,p.name,count(f.id) DESC"
             )
         ]
         unassigned = c.execute(
-            "SELECT count(*) count,min(id) cover FROM faces WHERE person_id IS NULL AND status='manual' AND EXISTS(SELECT 1 FROM media m WHERE m.id=faces.media_id AND m.status='ready') AND NOT EXISTS(SELECT 1 FROM unknown_faces u WHERE u.face_id=faces.id)"
+            f"SELECT count(*) count,min(id) cover FROM faces WHERE person_id IS NULL AND status='manual' AND EXISTS(SELECT 1 FROM media m WHERE m.id=faces.media_id AND m.status='ready' AND {source_management.VISIBLE}) AND NOT EXISTS(SELECT 1 FROM unknown_faces u WHERE u.face_id=faces.id)"
         ).fetchone()
         if unassigned["count"]:
             result.insert(
@@ -526,7 +598,7 @@ def people():
                 ),
             )
         bucket = c.execute(
-            "SELECT count(*) count,min(f.id) cover FROM faces f JOIN unknown_faces u ON u.face_id=f.id WHERE f.status!='dismissed' AND EXISTS(SELECT 1 FROM media m WHERE m.id=f.media_id AND m.status='ready')"
+            f"SELECT count(*) count,min(f.id) cover FROM faces f JOIN unknown_faces u ON u.face_id=f.id WHERE f.status!='dismissed' AND EXISTS(SELECT 1 FROM media m WHERE m.id=f.media_id AND m.status='ready' AND {source_management.VISIBLE})"
         ).fetchone()
         if bucket["count"]:
             result.insert(
@@ -543,7 +615,7 @@ def people():
 
 @app.get("/api/faces")
 def faces(person: int | None = None, unknown: bool = False):
-    where = "status!='dismissed' AND EXISTS(SELECT 1 FROM media m WHERE m.id=faces.media_id AND m.status='ready')"
+    where = f"status!='dismissed' AND EXISTS(SELECT 1 FROM media m WHERE m.id=faces.media_id AND m.status='ready' AND {source_management.VISIBLE})"
     args = []
     if person == -1:
         where += " AND EXISTS(SELECT 1 FROM unknown_faces u WHERE u.face_id=faces.id)"
@@ -566,6 +638,10 @@ def faces(person: int | None = None, unknown: bool = False):
 
 @app.get("/api/faces/{identity}/thumbnail")
 def face_thumb(identity: str):
+    with db() as c:
+        face=c.execute("SELECT media_id FROM faces WHERE id=?",(identity,)).fetchone()
+    if not face: raise HTTPException(404,"Face not found")
+    get_media(face[0])
     with db() as c:
         row = c.execute("SELECT id FROM faces WHERE id=?", (identity,)).fetchone()
     if row is None:
@@ -753,6 +829,15 @@ def undo():
         if action is None:
             raise HTTPException(400, "Nothing to undo")
         previous = json.loads(action["previous"])
+        if "review_batch" in previous:
+            from .bulk_review import undo_batch
+            undo_batch(c, previous)
+            c.execute("UPDATE actions SET undone=1 WHERE id=?", (action["id"],))
+            return dict(ok=True, description=action["description"])
+        if 'metadata' in previous:
+            metadata_support.undo(c, previous['metadata'])
+            c.execute("UPDATE actions SET undone=1 WHERE id=?", (action['id'],))
+            return dict(ok=True,description=action['description'])
         for f in previous.get("faces", []):
             c.execute(
                 "UPDATE faces SET person_id=?,status=? WHERE id=?",

@@ -1,17 +1,35 @@
-param([string]$LanAddress = '')
+param(
+    [string]$PythonPath = '',
+    [string]$DataDirectory = $env:DAHAN_DATA,
+    [string]$DatabaseDirectory = $env:DAHAN_DATABASE_DIR,
+    [string]$SourceDirectory = $env:DAHAN_SOURCE,
+    [string]$LanAddress = '',
+    [ValidateRange(1,65535)][int]$Port = 8765,
+    [switch]$EnableSchedules,
+    [switch]$RequireExistingDatabase,
+    [switch]$CheckOnly
+)
 $ErrorActionPreference = 'Stop'
-$projectRoot = Split-Path -Parent $PSScriptRoot
-$pythonPath = 'D:\DahanPhotoLibraryData\venv\Scripts\python.exe'
-$env:PYTHONDONTWRITEBYTECODE = '1'
-$env:TEMP = 'D:\DahanPhotoLibraryData\cache'
-$env:TMP = $env:TEMP
-Set-Location -LiteralPath $projectRoot
-$listenAddress = '127.0.0.1'
+$taskProject = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'common.ps1')
+$taskPython = Resolve-DahanPython -PythonPath $PythonPath -ProjectRoot $taskProject
+Set-DahanPaths -DataDirectory $DataDirectory -DatabaseDirectory $DatabaseDirectory -SourceDirectory $SourceDirectory
+$env:DAHAN_DISABLE_SCHEDULER = if ($EnableSchedules) { '0' } else { '1' }
+$env:DAHAN_REQUIRE_EXISTING_DATABASE = if ($RequireExistingDatabase) { '1' } else { '0' }
 $env:DAHAN_LAN_ADDRESS = $LanAddress
+$taskListen = '127.0.0.1'
 if ($LanAddress) {
-    $parsedAddress = [System.Net.IPAddress]::Parse($LanAddress)
-    if ($parsedAddress.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork) { throw 'Use the desktop IPv4 LAN address.' }
-    $listenAddress = '0.0.0.0'
-    Write-Host "Mobile test: http://${LanAddress}/ (same home network; no login yet)"
+    if ([Net.IPAddress]::Parse($LanAddress).AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork) {
+        throw 'LanAddress must be the server IPv4 address.'
+    }
+    $taskListen = '0.0.0.0'
 }
-& $pythonPath -B -m uvicorn backend.app:app --host $listenAddress --port 80
+if ($CheckOnly) {
+    @{application=$taskProject;python=$taskPython;runtime=$env:DAHAN_DATA;databases=$env:DAHAN_DATABASE_DIR;host=$taskListen;port=$Port;schedules=[bool]$EnableSchedules} | ConvertTo-Json
+    return
+}
+Push-Location -LiteralPath $taskProject
+try {
+    & $taskPython -X faulthandler -B -m uvicorn backend.app:app --host $taskListen --port $Port
+    if ($LASTEXITCODE -ne 0) { throw "Backend exited with code $LASTEXITCODE" }
+} finally { Pop-Location }

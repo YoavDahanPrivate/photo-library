@@ -20,7 +20,7 @@ def cached_map_results(filters):
             'WITH selected AS MATERIALIZED (SELECT m.id,m.latitude,m.longitude FROM media m WHERE ' + where + ') '
             'SELECT CASE WHEN ' + VALID + ' THEN m.latitude END latitude, '
             'CASE WHEN ' + VALID + ' THEN m.longitude END longitude, count(*) count, '
-            'min(m.id) cover,min(city.label) city,min(country.label) country '
+            "min(m.id) cover,min(city.label) city,min(country.label) country,sum(EXISTS(SELECT 1 FROM media_overrides mo WHERE mo.media_id=m.id AND json_extract(mo.payload,'$.location.latitude') IS NOT NULL)) manual_count "
             'FROM selected m LEFT JOIN media_places mp ON mp.media_id=m.id '
             'LEFT JOIN geographic_places city ON city.id=mp.city_id '
             'LEFT JOIN geographic_places country ON country.id=mp.country_id '
@@ -28,7 +28,9 @@ def cached_map_results(filters):
         points = [r for r in rows if r['latitude'] is not None]
         total = sum(r['count'] for r in rows)
         known = sum(r['count'] for r in points)
-        result = dict(points=points,total=total,known=known,unknown=total-known)
+        from .metadata_support import UNKNOWN, NO_GPS
+        counts=c.execute('SELECT sum('+NO_GPS+') no_gps,sum(('+UNKNOWN+')) unlocated FROM media m WHERE '+where,args).fetchone()
+        result = dict(points=points,total=total,known=known,unknown=total-known,no_gps=counts['no_gps'] or 0,unlocated=counts['unlocated'] or 0,place_only=(counts['no_gps'] or 0)-(counts['unlocated'] or 0))
         _cache[key] = result
         while len(_cache) > 6:
             _cache.popitem(last=False)

@@ -59,6 +59,9 @@ export default function UnifiedSearch({
     total: 0,
     known: 0,
     unknown: 0,
+    unlocated:0,
+    no_gps:0,
+    place_only:0,
   });
   const [mapContext, setMapContext] = useState(mapResults);
   const mapCache = useRef(new Map<string, Promise<any>>());
@@ -155,6 +158,7 @@ export default function UnifiedSearch({
     const positive = [
       ...next.places.map((id) => `Place(${quote(id)})`),
       ...(next.unknown ? ['Location("unknown")'] : []),
+      ...(next.no_gps ? ['Location("no_gps")'] : []),
       ...next.includes.map(
         (a) => `Area(${quote([a.south, a.north, a.west, a.east].join(","))})`,
       ),
@@ -493,6 +497,8 @@ export default function UnifiedSearch({
                   />
                   Location unknown
                 </label>
+                <label><input type="checkbox" checked={!!geo.no_gps} onChange={()=>changeGeo({...geo,no_gps:!geo.no_gps})}/>No GPS coordinates · includes named places
+                </label>
                 <div className="helper-options">
                   {places
                     .filter((p) =>
@@ -519,7 +525,7 @@ export default function UnifiedSearch({
                 </div>
                 <button
                   onClick={() =>
-                    changeGeo({ ...geo, places: [], unknown: false })
+                    changeGeo({ ...geo, places: [], unknown: false, no_gps:false })
                   }
                 >
                   Clear places
@@ -530,6 +536,7 @@ export default function UnifiedSearch({
             {panel === "Dates" && (
               <>
                 <p>Choose an inclusive date range, or type a date phrase in search.</p>
+                <label><input type="checkbox" checked={parts.missing_date==='Location("no_date")'} onChange={e=>update('missing_date',e.target.checked?'Location("no_date")':'')}/>Capture date unknown</label><p className="small-note">Estimated year/month/range values match overlapping date searches.</p>
                 <p className="small-note">Try “after May 2025”, “between May 2025 and April 2026”, or “&gt; May 21. 2024”. After/before exclude the named day or month; between includes both endpoints.</p>
                 <div className="date-inputs">
                   <label>
@@ -669,6 +676,10 @@ export default function UnifiedSearch({
                   Locations stay visible across area searches. Dashed markers are outside the applied results. Clear areas resets the map preview; Apply search updates the gallery.
                 </p>
                 {mapError && <p role="alert">{mapError}</p>}
+                <div className="unlocated-tray" aria-label="Photos outside the map">
+                  <button className={geo.unknown?'chosen':''} aria-pressed={geo.unknown} onClick={()=>changeGeo({...geo,unknown:!geo.unknown})}><strong>Unlocated · {(mapContext.unlocated??mapContext.unknown).toLocaleString()}</strong><span>No known place or GPS. Include these photos with any selected map areas.</span></button>
+                  <button className={geo.no_gps?'chosen':''} aria-pressed={!!geo.no_gps} onClick={()=>changeGeo({...geo,no_gps:!geo.no_gps})}><strong>No GPS coordinates · {(mapContext.no_gps??mapContext.unknown).toLocaleString()}</strong><span>{(mapContext.place_only??0).toLocaleString()} have a named place without a pin.</span></button>
+                </div><p className="small-note">Apply search to browse this collection, then use Edit dates &amp; locations in the gallery to assign a place or point.</p>
                 <GeoMap
                   key={mapGeneration}
                   geo={geo}

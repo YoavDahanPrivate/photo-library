@@ -102,6 +102,8 @@ def enrich():
         country_count = city_count = 0
         for m in media:
             lat, lon = m["latitude"], m["longitude"]
+            current=c.execute('SELECT latitude,longitude FROM media WHERE id=?',(m['id'],)).fetchone()
+            if current is None or (current['latitude'],current['longitude'])!=(lat,lon):continue
             country = lookup_country(lon, lat, polygons)
             cid = cityid = distance = None
             if country:
@@ -149,7 +151,9 @@ def enrich():
                 "INSERT OR REPLACE INTO media_places VALUES(?,?,?,?,?)",
                 (m["id"], cid, cityid, distance, "NE50m-GeoNames1000-settlement25km-v2"),
             )
-        c.execute("DELETE FROM geographic_places WHERE id NOT IN (SELECT country_id FROM media_places WHERE country_id IS NOT NULL UNION SELECT city_id FROM media_places WHERE city_id IS NOT NULL)")
+            from .metadata_support import preserve_location
+            preserve_location(c, m['id'])
+        c.execute("DELETE FROM geographic_places WHERE id NOT IN (SELECT country_id FROM media_places WHERE country_id IS NOT NULL UNION SELECT city_id FROM media_places WHERE city_id IS NOT NULL UNION SELECT json_extract(places,'$.country_id') FROM media_original_metadata WHERE places IS NOT NULL UNION SELECT json_extract(places,'$.city_id') FROM media_original_metadata WHERE places IS NOT NULL UNION SELECT json_extract(payload,'$.location.place_id') FROM media_overrides) AND id NOT LIKE 'manual:%'")
     report = dict(
         gps=len(media),
         country=country_count,

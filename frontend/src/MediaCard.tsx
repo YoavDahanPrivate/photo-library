@@ -1,3 +1,4 @@
+import {captureLabel,type MetadataInfo} from "./MetadataTools";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 const visibilityCallbacks = new Map<Element, (visible:boolean) => void>();
 let tileObserver: IntersectionObserver | null = null;
@@ -9,7 +10,7 @@ function observeTile(node: Element, callback:(visible:boolean)=>void) {
   tileObserver.observe(node);
   return () => {tileObserver?.unobserve(node);visibilityCallbacks.delete(node);if(!visibilityCallbacks.size){tileObserver?.disconnect();tileObserver=null;}};
 }
-type Item = {
+type Item = MetadataInfo & {
   id: string;
   name: string;
   phone: string;
@@ -26,9 +27,11 @@ type Item = {
 export default function MediaCard({
   item: m,
   onOpen,
+  selecting=false, selected=false, onSelect,
 }: {
   item: Item;
   onOpen: () => void;
+  selecting?:boolean; selected?:boolean; onSelect?:()=>void;
 }) {
   const tile = useRef<HTMLDivElement>(null);
   const [nearby, setNearby] = useState(false);
@@ -90,6 +93,7 @@ export default function MediaCard({
         if (e.pointerType === "mouse") stop();
       }}
     >
+      {selecting&&<label className="media-selection"><input type="checkbox" aria-label={'Select '+m.name} checked={selected} onChange={onSelect}/><span>Select</span></label>}
       <button
         className="photo-card"
         style={{aspectRatio: `${m.width || 4} / ${m.height || 3}`}}
@@ -128,9 +132,9 @@ export default function MediaCard({
         )}
         <span className="photo-caption">
           {m.phone}
-          <small>{m.taken?.replace("T", " ") || "Date unknown"}</small>
+          <small>{captureLabel(m)}</small>
           <small>
-            {[m.city && `Near ${m.city}`, m.country]
+            {m.location_label || [m.city && `Near ${m.city}`, m.country]
               .filter(Boolean)
               .join(", ") || "Location name unavailable"}
           </small>
@@ -139,7 +143,7 @@ export default function MediaCard({
           ) : null}
         </span>
       </button>
-      <div className="mobile-tile-info"><button className="tile-info-toggle" aria-label={"Photo information for "+m.name} aria-expanded={showInfo} onClick={()=>setShowInfo(v=>!v)}>ⓘ <span>{m.phone}</span>{!!m.people_names?.length&&<small> · {m.people_names.length} people</small>}</button>{showInfo&&<div className="tile-info-details"><strong>{m.name}</strong><span>{m.taken?.replace("T"," ")||"Date unknown"}</span><span>{[m.city,m.country].filter(Boolean).join(", ")||"Location unknown"}</span><span>{m.people_names?.join(", ")||"No named faces"}</span><button onClick={onOpen}>Open details</button></div>}</div>
+      <div className="mobile-tile-info"><button className="tile-info-toggle" aria-label={"Photo information for "+m.name} aria-expanded={showInfo} onClick={()=>setShowInfo(v=>!v)}>ⓘ <span>{m.phone}</span>{!!m.people_names?.length&&<small> · {m.people_names.length} people</small>}</button>{showInfo&&<div className="tile-info-details"><strong>{m.name}</strong><span>{captureLabel(m)}</span><span>{m.location_label||[m.city,m.country].filter(Boolean).join(", ")||"Location unknown"}</span><span>{m.people_names?.join(", ")||"No named faces"}</span><button onClick={onOpen}>Open details</button></div>}</div>
       {m.kind === "video" && (
         <div className="video-preview-action">
           <button
@@ -157,7 +161,7 @@ export default function MediaCard({
 }
 
 
-export function BufferedGallery({items, onOpen}: {items:Item[];onOpen:(id:string)=>void}) {
+export function BufferedGallery({items, onOpen,selecting=false,selected=[],onSelect}: {items:Item[];onOpen:(id:string)=>void;selecting?:boolean;selected?:string[];onSelect?:(id:string)=>void}) {
   const container = useRef<HTMLDivElement>(null);
   const [count,setCount] = useState(2);
   useLayoutEffect(() => {
@@ -176,5 +180,5 @@ export function BufferedGallery({items, onOpen}: {items:Item[];onOpen:(id:string
     columns[column].push(item);
     heights[column] += (item.height || 3) / (item.width || 4) + (item.kind === "video" ? 0.18 : 0.05);
   }
-  return <div className="buffered-gallery" ref={container}>{columns.map((column,index) => <div className="buffered-column" key={index}>{column.map((item) => <MediaCard key={item.id} item={item} onOpen={() => onOpen(item.id)} />)}</div>)}</div>;
+  return <div className="buffered-gallery" ref={container}>{columns.map((column,index) => <div className="buffered-column" key={index}>{column.map((item) => <MediaCard key={item.id} item={item} onOpen={() => onOpen(item.id)} selecting={selecting} selected={selected.includes(item.id)} onSelect={()=>onSelect?.(item.id)} />)}</div>)}</div>;
 }

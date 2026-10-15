@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="referrer" content="same-origin"><title>Download · Dahan Photos</title>
+<style>body{font:17px system-ui,sans-serif;background:#f1f4ef;color:#233d34;margin:0;padding:24px 16px}main{max-width:480px;margin:auto;background:white;border-radius:18px;padding:22px}h1{font-size:24px}p,li{line-height:1.5}img{max-width:100%;max-height:38vh;display:block;margin:auto}a,button{display:block;background:#254c39;color:white;text-align:center;padding:14px;border-radius:10px;margin-top:18px;text-decoration:none;border:0;font:inherit}textarea{box-sizing:border-box;width:100%;font:14px system-ui;padding:10px}#filename{overflow-wrap:anywhere}.muted{font-size:14px;color:#596c61}[hidden]{display:none!important}</style></head>
+<body><main><h1>Download · Dahan Photos</h1><p id="filename"></p><p id="status" role="status">Preparing download options…</p><img id="preview" alt="Photo preview" hidden><a id="download" hidden>Download file</a><section id="blocked" hidden><p>Open this link in the Safari app to download. Downloading inside the home-screen app can leave you without a Back button.</p><textarea id="link" aria-label="Link to open in Safari" readonly rows="3"></textarea></section><p class="muted">After saving, switch back to Dahan Photos using the app switcher. The original app stays on your photo or video.</p><a href="/">Open Dahan in this browser</a></main>
+<script>
+(()=>{
+ const params=new URLSearchParams(location.search),id=params.get('id')||'',format=params.get('format'),name=params.get('name')||'Dahan media';
+ const status=document.getElementById('status'),download=document.getElementById('download'),preview=document.getElementById('preview');
+ document.getElementById('filename').textContent=name;
+ if(!/^[A-Za-z0-9_-]{1,128}$/.test(id)||!['original','preview'].includes(format)){status.textContent='This download link is invalid. Return to Dahan and copy a new link.';return;}
+ const ios=/iPad|iPhone|iPod/.test(navigator.userAgent)||(/Macintosh/.test(navigator.userAgent)&&navigator.maxTouchPoints>1);
+ if(ios&&(navigator.standalone===true||matchMedia('(display-mode: standalone)').matches)){
+  status.textContent='Download is available in Safari.';document.getElementById('blocked').hidden=false;
+  const link=document.getElementById('link');link.value=location.href;link.addEventListener('focus',()=>{link.select();link.setSelectionRange(0,link.value.length);});return;
+ }
+ const base='/api/media/'+encodeURIComponent(id);
+ fetch(base).then(async r=>{if(!r.ok)throw new Error('This item is unavailable. Check the source in Dahan.');const media=await r.json();
+  const filename=(media.name||name).split(/[\\/]/).pop().replace(/[\u0000-\u001f]/g,'')||'Dahan media';
+  document.getElementById('filename').textContent=filename;
+  download.href=base+(format==='original'?'/original?download=true':'/thumbnail?size=large');
+  download.download=format==='original'?filename:filename.replace(/\.[^.]+$/,'')+'-preview.jpg';
+  download.textContent=format==='original'?'Download original':'Download JPEG preview';download.hidden=false;
+  preview.src=base+'/thumbnail?size=large';preview.hidden=false;status.textContent=format==='original'?'Original file, unchanged.':'JPEG preview, up to 1,600 pixels. For a video this is a still image.';
+ }).catch(error=>{status.textContent=error.message||'Could not load download options. Try again from Dahan.';});
+})();
+</script></body></html>

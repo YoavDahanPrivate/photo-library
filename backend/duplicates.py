@@ -53,10 +53,10 @@ def recover():
                 c.execute("UPDATE duplicate_trash SET state='attention',error='Source/trash conflict; no file overwritten' WHERE media_id=?",(r["media_id"],))
         c.execute("UPDATE duplicate_jobs SET state='interrupted',error='Backend stopped; completed file moves are saved. Review trash or run detection again.' WHERE state='running'")
 
-MEDIA_FIELDS="m.id,m.path,m.phone,m.album,m.name,m.kind,m.bytes,m.mtime,m.sha,m.taken,m.width,m.height,m.extension"
+MEDIA_FIELDS="m.id,m.database_id,m.source_id,m.album_id,m.path,m.phone,m.album,m.name,m.kind,m.bytes,m.mtime,m.sha,m.taken,m.width,m.height,m.extension"
 def format_key(row):
     if row["kind"]!="photo" or (row["extension"] or "").lower() not in (".heic",".jpg",".jpeg") or not row["taken"] or not row["width"] or not row["height"]: return None
-    return (row["phone"],Path(row["name"]).stem.casefold(),row["taken"],row["width"],row["height"])
+    return (row["source_id"] if "source_id" in row.keys() and row["source_id"] else row["phone"],Path(row["name"]).stem.casefold(),row["taken"],row["width"],row["height"])
 
 def detect_formats(job_id,keep_format):
     with core.db() as c:
@@ -120,8 +120,9 @@ def detect(job_id,mode="exact",keep_format="heic"):
 
 def validated_trash_path(row,identity):
     source=core.original(row)
-    phone_root=(core.ROOT/row["phone"]).resolve()
-    if row["phone"] not in core.PHONES or not source.is_relative_to(phone_root): raise ValueError("Invalid source phone")
+    from .source_management import source_root
+    phone_root=source_root(row)
+    if not source.is_relative_to(phone_root): raise ValueError("Invalid source phone")
     target=phone_root/".dtrash"/"dahan-duplicates"/identity/row["name"]
     if not target.resolve().is_relative_to(phone_root): raise ValueError("Trash folder resolves outside source phone")
     # Do not follow a junction/symlink in a trash ancestor.
@@ -163,7 +164,8 @@ def restore_one(mid):
     source=Path(r["source"]);trash=Path(r["trash"])
     with core.db() as c: row=c.execute("SELECT * FROM media WHERE id=?",(mid,)).fetchone()
     if not row or str(core.original(row))!=str(source.resolve()): raise ValueError("Original path changed")
-    expected_root=(core.ROOT/row["phone"]/".dtrash"/"dahan-duplicates").resolve()
+    from .source_management import source_root
+    expected_root=(source_root(row)/".dtrash"/"dahan-duplicates").resolve()
     if not trash.resolve().is_relative_to(expected_root) or trash.is_symlink(): raise ValueError("Invalid trash path")
     if source.exists(): raise ValueError("Original path is occupied; no file overwritten")
     with trash.open("rb") as f:

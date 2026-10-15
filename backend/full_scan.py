@@ -40,115 +40,20 @@ def checkpoint(progress, **updates):
 
 
 def discover(state):
-    from .indexer import IMAGES, VIDEOS
-
-    for phone in core.PHONES:
-        if not (core.ROOT / phone).is_dir():
-            raise RuntimeError("Source phone unavailable: " + phone)
+    from .source_management import inventory
+    files=inventory()
+    added=0; changed=[]; reports=Counter()
     with core.db() as c:
-        existing = {
-            r["path"]: (r["bytes"], r["mtime"])
-            for r in c.execute("SELECT path,bytes,mtime FROM media")
-        }
-    batch = []
-    reports = []
-    changed = []
-    errors = []
-    added = 0
-
-    def flush():
-        nonlocal added
-        if batch:
-            with core.db() as c:
-                inserted = c.executemany(
-                    "INSERT OR IGNORE INTO media(id,path,phone,album,name,kind,extension,bytes,mtime) VALUES(?,?,?,?,?,?,?,?,?)",
-                    batch,
-                )
-                added += inserted.rowcount
-            batch.clear()
-
-    for phone in core.PHONES:
-        base = core.ROOT / phone
-        counts = Counter()
-        other = Counter()
-        size = 0
-
-        def walk_error(error):
-            errors.append(str(error))
-
-        for directory, dirs, files in os.walk(
-            base, followlinks=False, onerror=walk_error
-        ):
-            dirs[:] = [
-                d
-                for d in dirs
-                if d not in (".dtrash", "PhotoPrismStorage", "$RECYCLE.BIN")
-                and not Path(directory, d).is_symlink()
-                and not Path(directory, d).is_junction()
-            ]
-            for filename in files:
-                path = Path(directory, filename)
-                ext = path.suffix.lower()
-                if ext not in IMAGES | VIDEOS:
-                    other[ext] += 1
-                    continue
-                if path.is_symlink():
-                    continue
-                try:
-                    stat = path.stat()
-                except OSError as e:
-                    errors.append(str(e))
-                    continue
-                counts[ext] += 1
-                size += stat.st_size
-                previous = existing.get(str(path))
-                if previous is not None:
-                    if previous != (stat.st_size, stat.st_mtime):
-                        changed.append(str(path))
-                    continue
-                relative = path.relative_to(base)
-                batch.append(
-                    (
-                        hashlib.sha256(str(path).encode()).hexdigest()[:24],
-                        str(path),
-                        phone,
-                        (
-                            relative.parts[0]
-                            if len(relative.parts) > 1
-                            else "(Phone root)"
-                        ),
-                        filename,
-                        "video" if ext in VIDEOS else "photo",
-                        ext,
-                        stat.st_size,
-                        stat.st_mtime,
-                    )
-                )
-                if len(batch) >= 200:
-                    flush()
-                    checkpoint(
-                        state, phase="discovering", added=added, current_phone=phone
-                    )
-        flush()
-        reports.append(
-            dict(
-                phone=phone,
-                files=sum(counts.values()),
-                bytes=size,
-                formats=dict(counts),
-                other_files=dict(other),
-            )
-        )
-    report = dict(
-        phones=reports,
-        added=added,
-        changed_sources=changed,
-        discovery_errors=errors,
-        created=stamp(),
-    )
-    (core.DATA / "full-inventory.json").write_text(
-        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+        for path,entry in files.items():
+            previous=c.execute("SELECT * FROM media WHERE path=?",(path,)).fetchone()
+            if previous:
+                if (previous["bytes"],previous["mtime"])!=(entry["bytes"],entry["mtime"]): changed.append(path)
+                continue
+            cols=list(entry)
+            c.execute("INSERT INTO media(id,"+",".join(cols)+") VALUES("+",".join("?" for _ in range(len(cols)+1))+")",[__import__('uuid').uuid4().hex[:24],*entry.values()])
+            added+=1; reports[entry["phone"]]+=1
+    report=dict(phones=[dict(phone=k,files=v) for k,v in reports.items()],added=added,changed_sources=changed,discovery_errors=[],created=stamp())
+    (core.DATA/"full-inventory.json").write_text(json.dumps(report),encoding="utf-8")
     return report
 
 
@@ -249,8 +154,11 @@ def process_one(identity, preview_only=False):
                 )
             if time.time() - before.st_mtime < 30:
                 raise RuntimeError("Source still being copied; resume later")
-            with path.open("rb") as handle:
-                digest = hashlib.file_digest(handle, "sha256").hexdigest()
+            # Reconciliation may already have verified this size/timestamp and hash.
+            digest=row['sha']
+            if not digest:
+                with path.open("rb") as handle:
+                    digest=hashlib.file_digest(handle,"sha256").hexdigest()
             frames, info = photo(path) if row["kind"] == "photo" else video(path)
             after = path.stat()
             if (before.st_size, before.st_mtime_ns) != (
@@ -285,6 +193,8 @@ def process_one(identity, preview_only=False):
                         identity,
                     ),
                 )
+                from .metadata_support import record_embedded
+                record_embedded(c, identity, info, before)
                 row = c.execute(
                     "SELECT * FROM media WHERE id=?", (identity,)
                 ).fetchone()
@@ -313,6 +223,10 @@ def process_one(identity, preview_only=False):
         if location:
             cid, cityid, distance, places = location
             with core.db() as c:
+                c.execute('BEGIN IMMEDIATE')
+                current=c.execute('SELECT latitude,longitude FROM media WHERE id=?',(identity,)).fetchone()
+                if current is None or (current['latitude'],current['longitude'])!=(row['latitude'],row['longitude']):
+                    return dict(id=identity,ok=True)
                 c.executemany(
                     "INSERT OR IGNORE INTO geographic_places VALUES(?,?,?,?,?,?,?)",
                     places,
@@ -327,6 +241,8 @@ def process_one(identity, preview_only=False):
                         "NE50m-GeoNames1000-settlement25km-v2",
                     ),
                 )
+                from .metadata_support import preserve_location
+                preserve_location(c, identity)
         return dict(id=identity, ok=True)
     except Exception as e:
         return dict(id=identity, ok=False, error=f"{type(e).__name__}: {e}"[:1600])
@@ -336,14 +252,16 @@ def assign_new_faces(limit=1000, allow_named=True):
     """Bounded group exemplars, no rewriting of any assigned/manual face."""
     import numpy as np
     from .people_review import vector
+    from .sync_service import run_scope
+    scope,args=run_scope()
 
     with core.db() as c:
         known = c.execute(
             "SELECT f.person_id,f.embedding,f.media_id,p.name FROM faces f JOIN people p ON p.id=f.person_id WHERE f.status!='dismissed' AND EXISTS(SELECT 1 FROM media m WHERE m.id=f.media_id AND m.status='ready') AND f.embedding IS NOT NULL AND (p.name IS NULL OR f.status NOT IN ('scan-suggested','auto-sync','reevaluated')) ORDER BY f.status='manual' DESC,f.id"
         ).fetchall()
         pending = c.execute(
-            "SELECT id,embedding FROM faces WHERE person_id IS NULL AND status='suggested' AND embedding IS NOT NULL AND EXISTS(SELECT 1 FROM media m WHERE m.id=faces.media_id AND m.status='ready') ORDER BY id LIMIT ?",
-            (limit,),
+            "SELECT id,embedding FROM faces WHERE person_id IS NULL AND status='suggested' AND embedding IS NOT NULL AND EXISTS(SELECT 1 FROM media m WHERE m.id=faces.media_id AND m.status='ready' AND "+scope+") ORDER BY id LIMIT ?",
+            (*args,limit),
         ).fetchall()
     if not pending:
         return 0
@@ -469,7 +387,7 @@ def run(workers=2):
     import msvcrt
 
     core.init()
-    lock = (core.DATA / "full-scan.lock").open("a+b")
+    lock = (core.database_dir() / "full-scan.lock").open("a+b")
     if lock.tell() == 0:
         lock.write(b"0")
         lock.flush()
@@ -502,7 +420,7 @@ def run(workers=2):
                 raise RuntimeError(
                     "Required offline model/reference missing: " + str(path)
                 )
-        backups = core.DATA.parent / "backups"
+        backups = Path(os.environ.get("DAHAN_BACKUP_DIR", str(core.DATA.parent / "backups")))
         backups.mkdir(exist_ok=True)
         backup = backups / (
             "catalogue-before-full-scan-"

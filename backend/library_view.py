@@ -2,7 +2,7 @@
 def collapse_format_pairs(where,args):
     # Ineligible records get their own partition. Apply search first so a matching
     # JPEG is not hidden behind a HEIC that does not match the person's/date filters.
-    partition="""m.phone,lower(substr(m.name,1,length(m.name)-length(m.extension))),
+    partition="""coalesce(m.source_id,m.phone),lower(substr(m.name,1,length(m.name)-length(m.extension))),
         m.taken,m.width,m.height,
         CASE WHEN m.kind='photo' AND m.taken IS NOT NULL AND m.taken!=''
           AND m.width>0 AND m.height>0 AND lower(m.extension) IN ('.heic','.jpg','.jpeg')

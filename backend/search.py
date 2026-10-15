@@ -144,7 +144,8 @@ class Parser:
             high = self.date_value()[1]
             if low > high:
                 raise ValueError('The start date must not be after the end date')
-            return 'coalesce((substr(m.taken,1,10) >= ? AND substr(m.taken,1,10) <= ?),0)', [low,high]
+            from .metadata_support import DATE_LOW, DATE_HIGH
+            return f'coalesce(({DATE_HIGH} >= ? AND {DATE_LOW} <= ?),0)', [low,high]
         if op == '==':
             op = '='
         op = {'after':'>', 'before':'<', 'since':'>=', 'until':'<=', 'through':'<=', 'on':'=', 'in':'=', 'during':'='}.get(op,op)
@@ -242,10 +243,11 @@ class Parser:
             if kind == "text":
                 return "(instr(lower(m.name),lower(?))>0 OR instr(lower(m.album),lower(?))>0)", [value,value]
             if kind == "location":
-                if value.lower() != "unknown":
-                    raise ValueError('Use Location("unknown") or Place("name")')
-                from .geo import VALID
-                return (None, []) if self.ignore_geography else (f"NOT coalesce({VALID},0)", [])
+                from .metadata_support import UNKNOWN, NO_GPS
+                choices={'unknown':UNKNOWN,'no_gps':NO_GPS,'no_date':"m.taken IS NULL OR m.taken=''"}
+                if value.lower() not in choices:
+                    raise ValueError('Use Location("unknown"), Location("no_gps"), Location("no_date") or Place("name")')
+                return (None, []) if self.ignore_geography and value.lower()!='no_date' else ('('+choices[value.lower()]+')', [])
             from .geo import add_location
             import math
             try:

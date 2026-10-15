@@ -1,4 +1,10 @@
+import PeopleProgress,{type PeopleOperation} from "./PeopleProgress";
+import ReviewPager from "./ReviewPager";
+import {readApiResponse} from "./ApiResponse";
 import AppUpdates from "./AppUpdates";
+import {albumLocation} from "./albumHierarchy";
+import {isIOSStandalone} from "./iosExport";
+import MetadataTools, {MetadataEditor,captureLabel,type MetadataInfo} from './MetadataTools';
 type ViewerNeighbor={id:string;previous:string|null;next:string|null;position:number|null;total:number};
 type ViewerNeighbors={previous:string|null;next:string|null;position:number|null;total:number;window?:ViewerNeighbor[]};
 import MediaViewerStage from "./MediaViewerStage";
@@ -17,6 +23,7 @@ import {
   ArrowLeft,
   Undo2,
   Check,
+  Repeat2,
   Info,
   CalendarDays,
   HardDrive,
@@ -33,7 +40,7 @@ import SearchWorkspace, {
   emptyGeo,
   hasGeo,
 } from "./SearchWorkspace";
-type Media = {
+type Media = MetadataInfo & {
   id: string;
   name: string;
   phone: string;
@@ -50,6 +57,9 @@ type Media = {
   people_names?: string[];
 };
 type Detail = Media & {
+  relative_path?:string;
+  source_relative_path?:string;
+  album_relative_path?:string;
   metadata: Record<string, string>;
   faces: {
     id: string;
@@ -61,7 +71,7 @@ type Detail = Media & {
     name: string | null;
   }[];
 };
-type Source = { phone: string; album: string; count: number };
+type Source = { phone: string; album: string; count: number;database_id?:string|null;source_id?:string|null;album_id?:string|null;database_alias?:string|null };
 type Person = { id: number; name: string | null; count: number; cover: string };
 type Face = {
   id: string;
@@ -102,15 +112,13 @@ async function api<T>(path: string, body?: unknown): Promise<T> {
           body: JSON.stringify(body),
         },
   );
-  if (!r.ok) {
-    const err = await r.json();
-    throw new Error(err.detail || "Request failed");
-  }
-  return r.json();
+  return readApiResponse<T>(r);
 }
 function App() {
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [liveSync,setLiveSync]=useState<{running:boolean;runs:{state:string;progress:{phase?:string}}[]}|null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(()=>window.location.hash.startsWith("#tools/"));
+  useEffect(()=>{const changed=()=>setSettingsOpen(window.location.hash.startsWith("#tools/"));window.addEventListener("hashchange",changed);return()=>window.removeEventListener("hashchange",changed);},[]);
+  useEffect(()=>{if(!settingsOpen&&window.location.hash.startsWith("#tools/"))window.history.replaceState(null,"",window.location.pathname+window.location.search);},[settingsOpen]);
+  const [liveSync,setLiveSync]=useState<{running:boolean;runs:{state:string;progress:{phase?:string;database_id?:string;live_added?:number;previews_published?:number}}[]}|null>(null);
   const [editingFace, setEditingFace] = useState(false);
   const [selectedGroups, setSelectedGroups] = useState<number[]>([]);
   const [builderOpen, setBuilderOpen] = useState(0);
@@ -192,6 +200,15 @@ function App() {
   const [correctionTargets, setCorrectionTargets] = useState<Record<string,string>>({});
   const [approvingAll, setApprovingAll] = useState(false);
   const [reviewMessage, setReviewMessage] = useState("");
+  const [peopleOperation,setPeopleOperation]=useState<PeopleOperation|null>(null);
+  const [peopleProgressError,setPeopleProgressError]=useState("");
+  const completedPeopleOperations=useRef(new Set<string>());
+  const observedPeopleOperations=useRef(new Set<string>());
+  const peopleReviewVersions=useRef(new Map<string,number>());
+  const peopleWorking=peopleOperation?.state==="queued"||peopleOperation?.state==="running";
+  const [approvalCount,setApprovalCount]=useState(0);
+  const [reviewPages,setReviewPages]=useState({high:0,lower:0});
+  const reviewPageSize=48;
   const [page, setPage] = useState<"library" | "people">("library");
   const [peopleQuery, setPeopleQuery] = useState("");
   const [geo, setGeo] = useState<GeoSelection>(emptyGeo);
@@ -201,6 +218,17 @@ function App() {
     [scope, setScope] = useState<string[]>([]),
     [albums, setAlbums] = useState<string[]>([]);
   const [sourcesReady,setSourcesReady]=useState(false);
+  const [databaseScope,setDatabaseScope]=useState("");
+  const [sourceScope,setSourceScope]=useState("");
+  const [albumScope,setAlbumScope]=useState("");
+  const sourceSnapshot=useRef<Source[]>([]);
+  const [includeChildren,setIncludeChildren]=useState(false);
+  const [hierarchy,setHierarchy]=useState<{databases:{id:string;alias:string;parent_id:string|null;visible:number}[];sources:{id:string;alias:string;database_id:string;database_alias:string;active:number;visible:number;database_visible:number}[];linked_sources:{id:string;alias:string;visible:boolean;members:{database_id:string}[]}[]}>({databases:[],sources:[],linked_sources:[]});
+
+  const databaseFamily=new Set([databaseScope]);
+  if(includeChildren){let changed=true;while(changed){changed=false;for(const d of hierarchy.databases)if(d.parent_id&&databaseFamily.has(d.parent_id)&&!databaseFamily.has(d.id)){databaseFamily.add(d.id);changed=true;}}}
+  const databaseChoices=hierarchy.databases.length?hierarchy.databases.filter(d=>d.visible).map(d=>[d.id,d.alias]):Array.from(new Map(sources.filter(s=>s.database_id).map(s=>[s.database_id!,s.database_alias||s.database_id!])).entries());
+  const sourceChoices=hierarchy.sources.length?hierarchy.sources.filter(s=>s.active&&s.visible&&s.database_visible&&(!databaseScope||databaseFamily.has(s.database_id))).map(s=>[s.id,s.alias+" · "+s.database_alias]):Array.from(new Map(sources.filter(s=>s.source_id&&(!databaseScope||s.database_id===databaseScope)).map(s=>[s.source_id!,s.phone+" · "+(s.database_alias||"Database")])).entries());
   const [sheet, setSheet] = useState(false),
     [kind, setKind] = useState(""),
     [orientation, setOrientation] = useState(""),
@@ -225,6 +253,17 @@ function App() {
     [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
     [revision, setRevision] = useState(0);
+  const [selectingMedia,setSelectingMedia]=useState(false),[selectedMedia,setSelectedMedia]=useState<string[]>([]),[editingMetadata,setEditingMetadata]=useState(false);
+  const [sortBy,setSortBy]=useState('capture');
+  const [connectionError,setConnectionError]=useState("");
+  useEffect(()=>{let active=true;api<typeof hierarchy>("/library/hierarchy").then(value=>{if(active)setHierarchy(value);}).catch(()=>{});return()=>{active=false;};},[status?.revision]);
+  useEffect(()=>{
+    if((sourcesReady&&status&&!loading)||connectionError||error){
+      document.getElementById("dahan-startup")?.remove();
+      window.dispatchEvent(new Event("dahan:ready"));
+    }
+  },[sourcesReady,status,loading,connectionError,error]);
+  const metadataSaved=()=>{setRevision(v=>v+1);setSelectedMedia([]);void api<Status>('/status').then(setStatus);if(detail)void api<Detail>('/media/'+detail.id).then(d=>setDetail(old=>old?.id===d.id?d:old));};
   const unnamedGroups = people.filter((p) => p.id > 0 && !p.name?.trim());
   const eligibleGroups = selectedGroups.filter((id) =>
     unnamedGroups.some((p) => p.id === id),
@@ -245,6 +284,7 @@ function App() {
     api<Source[]>("/sources")
       .then((s) => {
         setSources(s);
+        sourceSnapshot.current=s;
         const available = Array.from(new Set(s.map((x) => x.phone)));
         let saved: string[] | null = null;
         try {
@@ -254,16 +294,17 @@ function App() {
           if (Array.isArray(value) && value.every((v) => typeof v === "string"))
             saved = value;
         } catch {}
-        setScope(
-          saved ? saved.filter((v) => available.includes(v)) : available,
-        );
+        let stable:string[]|null=null;
+        try {const v=JSON.parse(localStorage.getItem("dahan.sourceIds.v2")||"null");if(Array.isArray(v)&&v.every(x=>typeof x==="string"))stable=v;}catch{}
+        const matched=stable?s.filter(x=>stable!.includes(x.source_id||"legacy:"+x.phone)).map(x=>x.phone):null;
+        setScope(matched?Array.from(new Set(matched)):saved?saved.filter(v=>available.includes(v)):available);
         setSourcesReady(true);
       })
       .catch((e) => setError(e.message));
     const update = () =>
       api<Status>("/status")
-        .then(s=>{setStatus(s);void api<typeof liveSync>("/sync/status").then(setLiveSync).catch(()=>{});})
-        .catch((e) => setError(e.message));
+        .then(s=>{setStatus(s);setConnectionError("");void api<typeof liveSync>("/sync/status").then(setLiveSync).catch(()=>{});})
+        .catch((e) => setConnectionError(e.message));
     update();
     const timer = setInterval(update, 5000);
     return () => clearInterval(timer);
@@ -293,7 +334,17 @@ function App() {
   useEffect(() => {
     if (!status) return;
     api<Source[]>("/sources")
-      .then(setSources)
+      .then(next=>{
+        const previous=sourceSnapshot.current;
+        setScope(selected=>{
+          const all=Array.from(new Set(previous.map(s=>s.phone))).every(name=>selected.includes(name));
+          const ids=new Set(previous.filter(s=>selected.includes(s.phone)).map(s=>s.source_id||"legacy:"+s.phone));
+          const names=Array.from(new Set(next.filter(s=>all||ids.has(s.source_id||"legacy:"+s.phone)).map(s=>s.phone)));
+          return names.length===selected.length&&names.every(name=>selected.includes(name))?selected:names;
+        });
+        sourceSnapshot.current=next;setSources(next);
+        setAlbums(selected=>{const available=selected.filter(a=>next.some(s=>s.phone+"\x1f"+s.album===a));return available.length===selected.length?selected:available;});
+      })
       .catch((e) => setError(e.message));
     if (page === "people" && group === null) setRevision((v) => v + 1);
   }, [status?.revision]);
@@ -301,9 +352,10 @@ function App() {
     if (sourcesReady) {
       try {
         localStorage.setItem("dahan.sources.v1", JSON.stringify(scope));
+        localStorage.setItem("dahan.sourceIds.v2",JSON.stringify(Array.from(new Set(sources.filter(s=>scope.includes(s.phone)).map(s=>s.source_id||"legacy:"+s.phone)))));
       } catch {}
     }
-  }, [scope, sourcesReady]);
+  }, [scope, sourcesReady, sources]);
   useEffect(() => {
     if (group !== null)
       setPersonName(
@@ -346,7 +398,10 @@ function App() {
 
   const query = (includeGeo = true) => {
     const p = new URLSearchParams();
-    scope.forEach((v) => p.append("phones", v));
+    if(databaseScope){p.append("database_ids",databaseScope);if(includeChildren)p.set("include_child_databases","true");}
+    if(sourceScope){if(sourceScope.startsWith("linked:"))p.append("linked_source_ids",sourceScope.slice(7));else p.append("source_ids",sourceScope);}
+    if(albumScope)p.append("album_ids",albumScope);
+    if(!databaseScope&&!sourceScope)scope.forEach((v) => p.append("phones", v));
     albums.forEach((v) => p.append("albums", v));
     peopleFilter.forEach((v) => p.append("people", String(v)));
     if (kind) p.set("kind", kind);
@@ -356,15 +411,16 @@ function App() {
     if (q) p.set("q", q);
     if (expression) p.set("expression", expression);
     p.set("order", order);
+    p.set("sort_by",sortBy);
     if(hideFormatDuplicates)p.set("hide_format_duplicates","true");
     p.set("catalogue_revision", String(status?.revision || 0));
-    if (!scope.length) p.append("phones", "__no_phone_selected__");
+    if (!scope.length&&!databaseScope&&!sourceScope) p.append("phones", "__no_phone_selected__");
     if (includeGeo && hasGeo(geo)) p.set("geo", JSON.stringify(geo));
     return p;
   };
   useEffect(() => {
     generation.current++;
-    if (!scope.length) {
+    if (!scope.length&&!databaseScope&&!sourceScope) {
       setItems([]);
       setTotal(0);
       setLoading(false);
@@ -398,6 +454,10 @@ function App() {
   }, [
     scope,
     albums,
+    databaseScope,
+    includeChildren,
+    sourceScope,
+    albumScope,
     kind,
     orientation,
     start,
@@ -408,6 +468,7 @@ function App() {
     geo,
     expression,
     order,
+    sortBy,
     hideFormatDuplicates,
   ]);
   useEffect(() => {
@@ -452,7 +513,7 @@ function App() {
     setExpression("");
     setGeo(emptyGeo);
     setScope(phoneNames);
-    setAlbums([]);
+    setAlbums([]);setAlbumScope("");
     setKind("");
     setOrientation("");
     setStart("");
@@ -542,6 +603,70 @@ function App() {
       setSavingReviews([...pendingReviews.current]);
     }
   };
+  const approveSuggestions = async (matches: typeof suggestions) => {
+    if (approvingAll || peopleWorking || pendingReviews.current.size || !matches.length) return;
+    setApprovingAll(true);
+    setApprovalCount(matches.length);
+    setReviewMessage(`Saving ${matches.length.toLocaleString()} assignments…`);
+    try {
+      const result = await api<{approved:number}>("/people/approve-suggestions", {
+        matches: matches.map(({face_id,person_id,source_person_id}) => ({face_id,person_id,source_person_id})),
+      });
+      const ids = new Set(matches.map(row => row.face_id));
+      ids.forEach(id => completedReviews.current.add(id));
+      setSuggestions(rows => rows.filter(row => !ids.has(row.face_id)));
+      setReviewMessage(`Saved ${result.approved.toLocaleString()} assignments. You can undo this batch. Reevaluate when ready to find more matches using these confirmations.`);
+      setRevision(v => v + 1);
+    } catch (e) {
+      setReviewMessage("");
+      setError(String(e));
+      // A lost response may follow a successful commit. Reload the queue so
+      // retrying never silently includes newly suggested faces.
+      try {
+        const rows = await api<typeof suggestions>("/people/suggestions");
+        setSuggestions(rows.filter(row => !completedReviews.current.has(row.face_id)));
+        setRevision(v => v + 1);
+      } catch { /* Keep the error and current selection visible for retry. */ }
+    } finally { setApprovingAll(false); }
+  };
+  useEffect(()=>{
+    let active=true,timer:ReturnType<typeof setTimeout>;
+    const poll=async()=>{
+      let running=false;
+      try {
+        const operation=await api<PeopleOperation|null>("/people/operations/current");
+        if(!active)return;
+        setPeopleProgressError("");
+        setPeopleOperation(previous=>previous?.id===operation?.id&&previous?.state===operation?.state&&previous?.updated_at===operation?.updated_at&&previous?.stop_requested===operation?.stop_requested?previous:operation);
+        running=operation?.state==="queued"||operation?.state==="running";
+        if(operation&&running)observedPeopleOperations.current.add(operation.id);
+        if(operation&&!running&&!observedPeopleOperations.current.has(operation.id))completedPeopleOperations.current.add(operation.id);
+        const reviewChanged=operation&&running&&(operation.review_revision||0)>(peopleReviewVersions.current.get(operation.id)||0);
+        if(operation&&(reviewChanged||(!running&&!completedPeopleOperations.current.has(operation.id)))){
+          const rows=await api<typeof suggestions>("/people/suggestions");
+          if(!active)return;
+          if(!running)completedPeopleOperations.current.add(operation.id);
+          peopleReviewVersions.current.set(operation.id,operation.review_revision||0);
+          completedReviews.current.clear();
+          setSuggestions(rows);setReviewPages({high:0,lower:0});setRevision(v=>v+1);
+        }
+      } catch(e){if(active)setPeopleProgressError(String(e));}
+      if(active)timer=setTimeout(poll,running?1000:5000);
+    };
+    void poll();return()=>{active=false;clearTimeout(timer);};
+  },[]);
+  useEffect(()=>{
+    if(peopleWorking||approvingAll)document.querySelector(".people-operation")?.scrollIntoView({block:"nearest",behavior:"smooth"});
+  },[peopleWorking,approvingAll]);
+  const reevaluatePeople=async(kind:"reevaluate"|"auto-approve"="reevaluate")=>{
+    if(pendingReviews.current.size||peopleWorking)return;
+    setBusy(true);
+    try {
+      const operation=await api<PeopleOperation>("/people/operations/"+kind,{});
+      observedPeopleOperations.current.add(operation.id);
+      setPeopleOperation(operation);setReviewMessage("");setPeopleProgressError("");
+    }catch(e){setError(String(e));}finally{setBusy(false);}
+  };
   const perform = async (path: string, body: unknown) => {
     setBusy(true);
     try {
@@ -577,23 +702,36 @@ function App() {
       name: action === "split" ? null : personName || null,
     });
   };
-  // Refresh the loaded window in place; keep filters, scroll position and open viewer.
+  // Finish one refresh before requesting another. Scan revisions can arrive
+  // faster than a large loaded window; discarding each response starves updates.
+  const galleryRefreshState=useRef({query:"",revision:0,count:0,total:0,allowed:false});
+  galleryRefreshState.current={query:query().toString(),revision:status?.revision||0,count:items.length,total,allowed:!!(scope.length||databaseScope||sourceScope)};
   useEffect(() => {
-    if (!scope.length || loading) return;
-    let active=true; const expected=generation.current;
+    if(loading||settingsOpen||page!=="library")return;
+    let active=true,busy=false,appliedRevision=-1;
     const refresh=async()=>{
-      const result:Media[]=[];let count=total;
-      for(let offset=0;offset<Math.max(80,items.length);offset+=200){
-        const p=query();p.set("offset",String(offset));p.set("limit",String(Math.min(200,Math.max(80,items.length)-offset)));
-        const batch=await api<{items:Media[];total:number}>("/media?"+p);
-        result.push(...batch.items);count=batch.total;
-        if(offset+batch.items.length>=count)break;
-      }
-      if(active&&generation.current===expected&&!loadingMore.current){setItems(result);setTotal(count);}
+      const snapshot=galleryRefreshState.current;
+      if(busy||!snapshot.allowed||snapshot.revision===appliedRevision||loadingMore.current)return;
+      busy=true;
+      const expected=generation.current;
+      try {
+        const result:Media[]=[];let count=snapshot.total;
+        for(let offset=0;offset<Math.max(80,snapshot.count);offset+=200){
+          if(!active||generation.current!==expected)return;
+          const p=new URLSearchParams(snapshot.query);p.set("offset",String(offset));p.set("limit",String(Math.min(200,Math.max(80,snapshot.count)-offset)));
+          const batch=await api<{items:Media[];total:number}>("/media?"+p);
+          result.push(...batch.items);count=batch.total;
+          if(offset+batch.items.length>=count)break;
+        }
+        if(active&&generation.current===expected&&!loadingMore.current&&galleryRefreshState.current.count===snapshot.count){
+          setItems(result);setTotal(count);appliedRevision=snapshot.revision;
+        }
+      } finally {busy=false;}
     };
-    void refresh().catch(()=>{});
-    return()=>{active=false;};
-  },[status?.revision]);
+    const request=()=>void refresh().catch(()=>{});
+    request();const timer=setInterval(request,5000);
+    return()=>{active=false;clearInterval(timer);};
+  },[loading,settingsOpen,page]);
   const loadSentinel = useRef<HTMLDivElement>(null);
   const loadingMore = useRef(false);
   const [moreError, setMoreError] = useState("");
@@ -640,7 +778,9 @@ function App() {
   useEffect(()=>{
     setMoreError("");setBackToSearch(false);
     for(const selector of [".unified-gallery-scroll","main.library-workspace-page"]){const pane=document.querySelector<HTMLElement>(selector);if(pane)pane.scrollTop=0;}
-  },[scope,albums,kind,start,end,q,expression,order,geo,hideFormatDuplicates]);
+  },[scope,albums,databaseScope,includeChildren,sourceScope,albumScope,kind,start,end,q,expression,order,geo,hideFormatDuplicates]);
+  useEffect(()=>{setSelectedMedia([]);},[scope,albums,databaseScope,includeChildren,sourceScope,albumScope,kind,start,end,q,expression,geo]);
+  useEffect(()=>{setEditingMetadata(false);},[detail?.id]);
   const groups: Record<string, Media[]> = {};
   items.forEach((m) => {
     const day =
@@ -767,9 +907,9 @@ function App() {
             }}
           >
             <Layers size={20} />
-            Phones & albums
+            Sources & albums
           </button>
-          <button className={settingsOpen ? "active" : ""} onClick={()=>setSettingsOpen(true)}><HardDrive size={20}/>Library tools</button>
+          <button className={settingsOpen ? "active" : ""} onClick={()=>{window.location.hash="tools/databases";setSettingsOpen(true);}}><HardDrive size={20}/>Library tools</button>
         </nav>
         <div className="sidebar-bottom">
           <HardDrive size={18} />
@@ -790,7 +930,7 @@ function App() {
             {(status?.total || 0).toLocaleString()} files
           </span>
         </header>
-        {liveSync && (liveSync.running || ["paused","cancelled","interrupted"].includes(liveSync.runs[0]?.state)) && <section className="live-sync" aria-label="Library sync"><strong>Sync · {liveSync.runs[0]?.state}</strong><span>{liveSync.runs[0]?.progress.phase} · {(status?.counts.ready||0).toLocaleString()} viewable</span><button onClick={()=>setSettingsOpen(true)}>Sync controls</button><small>{liveSync.running?"New previews appear automatically; recognition continues in the background.":"Progress is saved. Resume from Library tools when ready."}</small></section>}
+        {liveSync && (liveSync.running || ["paused","cancelled","interrupted"].includes(liveSync.runs[0]?.state)) && <section className="live-sync" aria-label="Library sync"><strong>Sync · {liveSync.runs[0]?.state}</strong><span>{liveSync.runs[0]?.progress.phase} · {(status?.counts.ready||0).toLocaleString()} viewable</span><button onClick={()=>{window.location.hash="tools/sync";setSettingsOpen(true);}}>Sync controls</button>{liveSync.runs[0]?.progress.live_added!==undefined&&<span>{liveSync.runs[0].progress.live_added!.toLocaleString()} new items · {(liveSync.runs[0].progress.previews_published||0).toLocaleString()} previews processed</span>}{liveSync.runs[0]?.progress.database_id&&databaseChoices.some(([id])=>id===liveSync.runs[0].progress.database_id)&&<button onClick={()=>{reset();setDatabaseScope(liveSync.runs[0].progress.database_id!);setSourceScope("");setAlbumScope("");setPage("library");setSettingsOpen(false);}}>View importing Database</button>}<small>{liveSync.running?"New previews appear while scanning. Face recognition follows preview publishing.":"Progress is saved. Resume from Library tools when ready."}</small></section>}
         {!liveSync?.runs.length && status?.scan && (
           <section className="scan-progress" aria-label="Full library scan">
             <strong>
@@ -851,6 +991,8 @@ function App() {
             {status.scan.error && <p role="alert">{status.scan.error}</p>}
           </section>
         )}
+        <PeopleProgress operation={peopleOperation} approving={approvingAll} approvalCount={approvalCount} connection={peopleProgressError} onCancel={async()=>{if(peopleOperation)try{await api("/people/operations/"+peopleOperation.id+"/cancel",{});}catch(e){setError(String(e));throw e;}}}/>
+        {connectionError && <div role="alert" className="error">{connectionError} Retrying automatically…</div>}
         {error && (
           <div role="alert" className="error">
             {error}
@@ -859,12 +1001,17 @@ function App() {
             </button>
           </div>
         )}
-        {settingsOpen ? <SyncSettings onPeopleChanged={()=>setRevision(v=>v+1)} onClose={() => setSettingsOpen(false)} hideFormatDuplicates={hideFormatDuplicates} onHideFormatDuplicates={setHideFormatDuplicates} /> : page === "library" ? (
+        {settingsOpen ? <SyncSettings onBrowseAlbum={(databaseId,sourceId,albumId)=>{setDatabaseScope(databaseId);setIncludeChildren(false);setSourceScope(sourceId);setAlbums([]);setAlbumScope(albumId);setSettingsOpen(false);setPage("library");setResultsLoading(true);}} onPeopleChanged={()=>setRevision(v=>v+1)} onClose={() => setSettingsOpen(false)} hideFormatDuplicates={hideFormatDuplicates} onHideFormatDuplicates={setHideFormatDuplicates} /> : page === "library" ? (
           <>
             {backToSearch&&<button className="back-to-search" onClick={()=>{const pane=document.querySelector<HTMLElement>("main.library-workspace-page");pane?.scrollTo({top:0,behavior:window.matchMedia("(prefers-reduced-motion:reduce)").matches?"auto":"smooth"});}}>↑ Back to search</button>}
+            <div className="sync-fields" aria-label="Database and Source filters">
+              <label>Database<select aria-label="Database" value={databaseScope} onChange={e=>{setDatabaseScope(e.target.value);setIncludeChildren(false);setSourceScope("");setAlbums([]);setAlbumScope("");setResultsLoading(true);}}><option value="">All visible Databases</option>{databaseChoices.map(([id,name])=><option key={id} value={id}>{name}</option>)}</select></label>{databaseScope&&hierarchy.databases.some(d=>d.parent_id===databaseScope)&&<label className="library-children-toggle"><input type="checkbox" checked={includeChildren} onChange={e=>{setIncludeChildren(e.target.checked);setSourceScope("");setAlbumScope("");setResultsLoading(true);}}/>Include child Databases</label>}
+              <label>Source<select aria-label="Source" value={sourceScope} onChange={e=>{setSourceScope(e.target.value);setAlbums([]);setAlbumScope("");setResultsLoading(true);}}><option value="">All Sources in scope</option><optgroup label="Folder Sources">{sourceChoices.map(([id,name])=><option key={id} value={id}>{name}</option>)}</optgroup>{hierarchy.linked_sources.some(g=>g.visible)&&<optgroup label="Linked Sources">{hierarchy.linked_sources.filter(g=>g.visible&&(!databaseScope||g.members.some(m=>databaseFamily.has(m.database_id)))).map(g=><option key={g.id} value={"linked:"+g.id}>{g.alias}</option>)}</optgroup>}</select></label>
+            </div>
+            {albumScope&&<p className="library-album-scope">Album: <strong>{sources.find(s=>s.album_id===albumScope)?.album||"Selected Album"}</strong> <button onClick={()=>setAlbumScope("")}>Show all Albums</button></p>}
             <UnifiedSearch sourceSelection={scope} onSourceChange={(selected)=>{setResultsLoading(true);setScope(selected);}} resultsLoading={resultsLoading} people={people} sources={sources} expression={expression} query={query().toString()} onApply={(value) => {
               setResultsLoading(true);
-              if(!value.trim())setScope(phoneNames);setAlbums([]);setGeo(emptyGeo);setQ("");setPeopleFilter([]);setStart("");setEnd("");setKind("");setOrientation("");setExpression(value);
+              if(!value.trim())setScope(phoneNames);setAlbums([]);setAlbumScope("");setGeo(emptyGeo);setQ("");setPeopleFilter([]);setStart("");setEnd("");setKind("");setOrientation("");setExpression(value);
             }}>
               {(mediaControl)=><>
               <div className="gallery-controls" aria-label="Gallery display controls">
@@ -884,6 +1031,7 @@ function App() {
                 ))}
               </div>
               {mediaControl}
+              <select className="gallery-media-filter gallery-sort-basis" aria-label="Gallery sort basis" title="Sort by" value={sortBy} onChange={e=>setSortBy(e.target.value)}><option value="capture">Sort by: Capture date</option><option value="file">Sort by: File date</option></select>
               <label className="sort-control">
                 <span className="sort-label">Date order</span>
                 <select
@@ -899,6 +1047,8 @@ function App() {
                   {total.toLocaleString()} moments
                 </span>
               </div>
+              <MetadataTools query={query().toString()} selected={selectedMedia} selecting={selectingMedia} onSelecting={setSelectingMedia} onSelectLoaded={()=>setSelectedMedia(items.map(m=>m.id))} onClear={()=>setSelectedMedia([])} count={total} revision={revision} onSaved={metadataSaved}/>
+              {sortBy==='file'&&<p className="metadata-note">Sorting by filesystem timestamp. Timeline groups still describe capture dates; missing capture dates stay unknown.</p>}
               {loading && !items.length ? (
                 <div className="empty">
                   <LoaderCircle className="spin" />
@@ -934,7 +1084,7 @@ function App() {
                         <h2>
                           {day === "Unknown date" ||
                           day === "All moments" ||
-                          view === "years"
+                          view === "years" || day.length<10
                             ? day
                             : new Date(
                                 day +
@@ -954,7 +1104,7 @@ function App() {
                         </h2>
                         <span>{photos.length} shown</span>
                       </div>
-                      <BufferedGallery items={photos} onOpen={resultsLoading ? ()=>{} : open} />
+                      <BufferedGallery items={photos} onOpen={resultsLoading ? ()=>{} : open} selecting={selectingMedia} selected={selectedMedia} onSelect={id=>setSelectedMedia(old=>old.includes(id)?old.filter(i=>i!==id):[...old,id])} />
                     </section>
                   ))
               )}
@@ -990,7 +1140,7 @@ function App() {
               </div>
               <button
                 className="outline"
-                disabled={busy || approvingAll || savingReviews.length > 0}
+                disabled={busy || peopleWorking || approvingAll || savingReviews.length > 0}
                 onClick={() => perform("/undo", {})}
               >
                 <Undo2 size={17} />
@@ -1005,7 +1155,7 @@ function App() {
                     <strong>Suggestions, ready for your review</strong>
                     <p>
                       Open a group to name it, move incorrect faces, or split it
-                      into different people. This review covers all phones.
+                      into different people. This review covers all Sources.
                     </p>
                   </div>
                 </div>
@@ -1022,58 +1172,37 @@ function App() {
                   <div className="builder-actions">
                     <button
                       className="primary"
-                      disabled={busy || approvingAll || savingReviews.length > 0}
-                      onClick={async () => {
-                        if (pendingReviews.current.size) return;
-                        setBusy(true);
-                        try {
-                          const r = await api<{
-                            assigned: number;
-                            suggestions: number;
-                            evaluated: number;
-                            saved_people: number;
-                          }>("/people/reevaluate", {});
-                          const refreshed = await api<typeof suggestions>(
-                            "/people/suggestions",
-                          );
-                          completedReviews.current.clear();
-                          setSuggestions(refreshed);
-                          setReviewMessage(
-                            `Checked ${r.evaluated} unnamed faces against ${r.saved_people} saved people. ${r.suggestions} matches ready for review. No faces assigned automatically.`,
-                          );
-                          setRevision((v) => v + 1);
-                        } catch (e) {
-                          setError(String(e));
-                        } finally {
-                          setBusy(false);
-                        }
-                      }}
+                      disabled={busy || peopleWorking || approvingAll || savingReviews.length > 0}
+                      onClick={()=>reevaluatePeople()}
                     >
-                      {busy ? "Working…" : "Reevaluate unassigned faces"}
+                      {peopleWorking ? peopleOperation?.kind==="auto-approve"?"Auto approval running…":"Reevaluation running…" : busy ? "Working…" : "Reevaluate unassigned faces"}
                     </button>
                   </div>
                   <p className="small-note">
-                    Confidence is based on similarity, separation from other people, and supporting photos—not an accuracy percentage. All matches now require approval.
+                    Confidence is based on similarity, separation from other people, and supporting photos—not an accuracy percentage. Choose individual approvals, Approve all, or the high-confidence approval loop.
                   </p>
                   {reviewMessage && <p role="status">{reviewMessage}</p>}
                   <div className="confidence-sections">
                     {(["high", "lower"] as const).map((level) => {
                       const sectionMatches = suggestions.filter((s) => s.confidence === level);
+                      const sectionPage=Math.min(reviewPages[level],Math.max(0,Math.ceil(sectionMatches.length/reviewPageSize)-1));
                       return <section key={level} aria-label={level === "high" ? "High-confidence matches" : "Lower-confidence matches"}>
                         <h3>{level === "high" ? "High-confidence matches" : "Lower-confidence matches"} ({sectionMatches.length})</h3>
-                        <button disabled={busy || approvingAll || !!savingReviews.length || !sectionMatches.length} onClick={async () => {
-                          setApprovingAll(true);
-                          try { for (const suggestion of sectionMatches) await reviewSuggestion(suggestion, true); }
-                          finally {setApprovingAll(false);}
-                        }}>{approvingAll ? "Approving…" : `Approve all ${sectionMatches.length}`}</button>
+                        <div className="approval-actions">
+                        <button className="outline approve-all-button" disabled={busy || peopleWorking || approvingAll || !!savingReviews.length || !sectionMatches.length} onClick={() => approveSuggestions(sectionMatches)}><Check size={16} aria-hidden="true"/>{approvingAll ? "Saving assignments…" : `Approve all ${sectionMatches.length}`}</button>
+                        {level==="high"&&<button className="outline approve-all-button auto-approve-button" disabled={busy||peopleWorking||approvingAll||!!savingReviews.length||!sectionMatches.length} onClick={()=>reevaluatePeople("auto-approve")}><Repeat2 size={16} aria-hidden="true"/>Auto approve high-confidence</button>}
+                        </div>
+                        {level==="high"&&<p className="small-note auto-approve-help">Auto approve repeats approval and reevaluation until no high-confidence matches remain, or you press Stop. Completed approvals stay saved; each batch can be undone.</p>}
+                        <ReviewPager page={sectionPage} total={sectionMatches.length} size={reviewPageSize} onPage={value=>setReviewPages(previous=>({...previous,[level]:value}))}/>
                         <div className="suggestion-grid">
-                        {sectionMatches.map((s) => (
+                        {sectionMatches.slice(sectionPage*reviewPageSize,(sectionPage+1)*reviewPageSize).map((s) => (
                           <div
                             key={s.face_id}
                             aria-busy={savingReviews.includes(s.face_id)}
                           >
                             <img
                               src={faceThumb(s.face_id)}
+                              loading="lazy" decoding="async"
                               alt="Face suggested for assignment"
                             />
                             <span>Possibly {s.name}</span>
@@ -1081,7 +1210,7 @@ function App() {
                               s.source_person_id > 0 && (
                                 <button
                                   disabled={
-                                    busy || approvingAll || savingReviews.includes(s.face_id)
+                                    busy || peopleWorking || approvingAll || savingReviews.includes(s.face_id)
                                   }
                                   onClick={() => openPeopleGroup(s.source_person_id!)}
                                 >
@@ -1090,7 +1219,7 @@ function App() {
                               )}
                             <button
                               disabled={
-                                busy || approvingAll || savingReviews.includes(s.face_id)
+                                busy || peopleWorking || approvingAll || savingReviews.includes(s.face_id)
                               }
                               onClick={() => reviewSuggestion(s, true)}
                             >
@@ -1100,7 +1229,7 @@ function App() {
                             </button>
                             <button
                               disabled={
-                                busy || approvingAll || savingReviews.includes(s.face_id)
+                                busy || peopleWorking || approvingAll || savingReviews.includes(s.face_id)
                               }
                               onClick={() => reviewSuggestion(s, false)}
                             >
@@ -1126,7 +1255,7 @@ function App() {
                           <option value="">Leave unassigned</option>
                           {namedCorrectionPeople.filter((p) => p.id !== s.person_id).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                         </select>
-                        <button disabled={busy || approvingAll || !!savingReviews.length} onClick={() => perform("/faces/correct", {face_ids:[s.face_id], action:correctionTargets[s.face_id] ? "move" : "unknown", target:correctionTargets[s.face_id] ? Number(correctionTargets[s.face_id]) : null, expected_person:s.person_id})}>Wrong person</button>
+                        <button disabled={busy || peopleWorking || approvingAll || !!savingReviews.length} onClick={() => perform("/faces/correct", {face_ids:[s.face_id], action:correctionTargets[s.face_id] ? "move" : "unknown", target:correctionTargets[s.face_id] ? Number(correctionTargets[s.face_id]) : null, expected_person:s.person_id})}>Wrong person</button>
                       </div>)}
                     </div>
                     {approvedOpen && approvedLimit < approvedReviews.length && <button onClick={() => setApprovedLimit((n) => n + 40)}>Show next 40 approvals</button>}
@@ -1490,21 +1619,21 @@ function App() {
           <Layers />
           Albums
         </button>
-        <button className={settingsOpen ? "active" : ""} aria-label="Library tools" onClick={()=>setSettingsOpen(true)}><HardDrive/>Tools</button>
+        <button className={settingsOpen ? "active" : ""} aria-label="Library tools" onClick={()=>{window.location.hash="tools/databases";setSettingsOpen(true);}}><HardDrive/>Tools</button>
       </nav>
       {sheet && (
         <div className="overlay" onClick={() => setSheet(false)}>
           <section
             role="dialog"
             aria-modal="true"
-            aria-label="Phones, albums and filters"
+            aria-label="Sources, albums and filters"
             className="filter-sheet"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="sheet-heading">
               <div>
                 <span className="eyebrow">MAKE IT YOUR VIEW</span>
-                <h2>Phones & filters</h2>
+                <h2>Sources & filters</h2>
               </div>
               <button
                 aria-label="Close filters"
@@ -1517,9 +1646,9 @@ function App() {
               <div className="filter-section">
                 <h3>
                   <Smartphone size={17} />
-                  Phones
+                  Sources
                 </h3>
-                <p>Only selected phones appear in your library.</p>
+                <p>Select Sources here, or choose a Database and Source above the search.</p>
                 {phoneNames.map((phone) => (
                   <label className="check-row" key={phone}>
                     <input
@@ -1542,7 +1671,7 @@ function App() {
                   Source albums
                 </h3>
                 <button className="text-button" onClick={() => setAlbums([])}>
-                  All albums in selected phones
+                  All albums in selected Sources
                 </button>
                 {scope.map((phone) => (
                   <details key={phone}>
@@ -1713,26 +1842,30 @@ function App() {
               </span>
               <h2>{detail.name}</h2>
               {detail.kind==="photo"&&<div className="viewer-face-entry"><button className="primary" onClick={()=>{collapseViewer();setEditingFace(v=>!v);}}>{editingFace?"Close face editor":"Add a missed face / edit faces"}</button>{!detail.faces.length&&<p>No faces detected. You can mark a face manually.</p>}</div>}
+              <button className="primary" onClick={()=>{collapseViewer();setEditingMetadata(v=>!v);}}>{editingMetadata?'Close date/location editor':'Edit date & location'}</button>
+              {editingMetadata&&<MetadataEditor ids={[detail.id]} count={1} onSaved={metadataSaved} onClose={()=>setEditingMetadata(false)}/>}
               <dl>
                 <dt>Phone</dt>
                 <dd>{detail.phone}</dd>
-                <dt>Album</dt>
-                <dd>{detail.album}</dd>
+                {(()=>{const location=albumLocation({album:detail.album,albumKey:detail.album_relative_path,relative:detail.relative_path,sourceKey:detail.source_relative_path});return <><dt>Album</dt><dd>{location.album}</dd>{location.subAlbum&&<><dt>Sub Album</dt><dd className="viewer-sub-album">{location.subAlbum}</dd></>}</>;})()}
                 <dt>Date taken</dt>
                 <dd>
-                  {detail.taken
-                    ? new Date(detail.taken).toLocaleString()
-                    : "Unknown — no capture date found"}
+                  {captureLabel(detail)}
                 </dd>
                 <dt>Location</dt>
                 <dd>
-                  {[detail.city && `Near ${detail.city}`, detail.country]
+                  {detail.location_label || [detail.city && `Near ${detail.city}`, detail.country]
                     .filter(Boolean)
                     .join(", ") ||
                     (detail.latitude !== null
                       ? "GPS available; name unresolved"
                       : "Unknown — no GPS found")}
                 </dd>
+                <dt>Location provenance</dt><dd>{detail.location_source==='manual'?`Entered by user · ${detail.location_precision==='place'?'place only, no GPS coordinates':'manual point'}`:detail.location_source==='embedded'?'Embedded GPS':'Unknown'}</dd>
+                <dt>Embedded capture date</dt><dd>{detail.embedded_taken||'Absent'}{detail.embedded_date_field?' · '+detail.embedded_date_field:''}</dd>
+                <dt>File created</dt><dd>{detail.file_created?new Date(detail.file_created*1000).toLocaleString():'Unavailable in the existing catalogue'}</dd>
+                <dt>File modified</dt><dd>{detail.file_modified?new Date(detail.file_modified*1000).toLocaleString():'Unknown'}</dd>
+                <dt>First recorded index</dt><dd>{detail.imported_at?new Date(detail.imported_at).toLocaleString():'Not recorded for this earlier import'}</dd>
                 <dt>People tags</dt>
                 <dd>
                   {detail.people_names?.join(", ") ||
@@ -1789,6 +1922,7 @@ function App() {
               <a
                 className="outline"
                 href={"/api/media/" + detail.id + "/original"}
+                onClick={event=>{if(isIOSStandalone()){event.preventDefault();window.dispatchEvent(new CustomEvent("dahan:save-original",{detail:{id:detail.id}}));}}}
                 target="_blank"
                 rel="noreferrer"
               >
@@ -1829,7 +1963,7 @@ function App() {
           </section>
         </div>
       )}
-      <AppUpdates canReload={!detail && !settingsOpen && !busy && page === "library"} />
+      <AppUpdates canReload={!detail && !settingsOpen && !busy && !peopleWorking && !approvingAll && page === "library"} />
       {notice && (
         <div role="status" className="toast">
           <Check size={17} />

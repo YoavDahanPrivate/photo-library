@@ -6,13 +6,28 @@ ROOT = Path(os.environ.get("DAHAN_SOURCE", "D:/DahanPhotosSync"))
 PHONES = ("Yoav14ProMax", "Bar\u2019s iPhone", "iPhoneX Hila")
 
 
+def database_dir():
+    return Path(os.environ.get("DAHAN_DATABASE_DIR") or DATA)
+
+
+def database_path(name):
+    path = database_dir() / name
+    if os.environ.get("DAHAN_REQUIRE_EXISTING_DATABASE") == "1" and (not path.is_file() or path.stat().st_size == 0):
+        raise OSError("Expected library database is unavailable: " + str(path))
+    return path
+
+
 def db():
-    DATA.mkdir(parents=True, exist_ok=True)
-    c = sqlite3.connect(DATA / "catalogue.sqlite", timeout=30)
+    path = database_path("catalogue.sqlite")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    c = sqlite3.connect(path, timeout=30)
     c.row_factory = sqlite3.Row
     from .geo import distance_km
 
     c.create_function("distance_km", 4, distance_km, deterministic=True)
+    from .metadata_support import bounds
+    c.create_function("capture_low", 1, lambda value: bounds(value)[0], deterministic=True)
+    c.create_function("capture_high", 1, lambda value: bounds(value)[1], deterministic=True)
     c.execute("PRAGMA foreign_keys=ON")
     return c
 
@@ -55,9 +70,21 @@ def init():
             if name not in columns:
                 c.execute(f"ALTER TABLE faces ADD COLUMN {name} INTEGER")
 
+        from .source_management import migrate
+        migrate(c)
+        from .metadata_support import migrate as migrate_metadata
+        migrate_metadata(c)
 
 def original(row):
+    from .source_management import source_root
+    from .network_access import ensure_access
+    base = source_root(row)
+    ensure_access(base)
     p = Path(row["path"]).resolve()
-    if not any(p.is_relative_to((ROOT / phone).resolve()) for phone in PHONES):
-        raise ValueError("Source outside allowed phone folders")
+    if not p.is_relative_to(base):
+        raise ValueError("Source outside its registered root")
+    lexical = Path(row["path"])
+    for ancestor in (lexical, *lexical.parents):
+        if ancestor.is_relative_to(base) and (ancestor.is_symlink() or ancestor.is_junction()):
+            raise ValueError("Source must not traverse links")
     return p

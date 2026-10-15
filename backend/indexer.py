@@ -52,57 +52,22 @@ def choose(paths, limit=200):
 
 
 def sample():
-    report = []
+    from .source_management import inventory
+    import uuid
+    files=inventory()
+    grouped=defaultdict(list)
+    for path,entry in files.items(): grouped[entry["source_id"]].append(Path(path))
+    report=[]
     with db() as c:
-        for phone in PHONES:
-            base = ROOT / phone
-            if not base.is_dir():
-                raise RuntimeError("Source offline: " + phone)
-            candidates = [
-                p
-                for p in base.rglob("*")
-                if p.is_file()
-                and not p.is_symlink()
-                and p.suffix.lower() in IMAGES | VIDEOS
-            ]
-            selected = choose(candidates)
-            formats = defaultdict(int)
-            for p in selected:
-                stat = p.stat()
-                ext = p.suffix.lower()
-                album = (
-                    p.relative_to(base).parts[0]
-                    if len(p.relative_to(base).parts) > 1
-                    else "(Phone root)"
-                )
-                mid = hashlib.sha256(str(p).encode()).hexdigest()[:24]
-                c.execute(
-                    "INSERT OR IGNORE INTO media(id,path,phone,album,name,kind,extension,bytes,mtime) VALUES(?,?,?,?,?,?,?,?,?)",
-                    (
-                        mid,
-                        str(p),
-                        phone,
-                        album,
-                        p.name,
-                        "video" if ext in VIDEOS else "photo",
-                        ext,
-                        stat.st_size,
-                        stat.st_mtime,
-                    ),
-                )
-                formats[ext] += 1
-            report.append(
-                dict(
-                    phone=phone,
-                    available=len(candidates),
-                    selected=len(selected),
-                    formats=dict(formats),
-                )
-            )
-    (DATA / "sample-report.json").write_text(
-        json.dumps(report, indent=2), encoding="utf-8"
-    )
-    print(json.dumps(report), flush=True)
+        for sid,paths in grouped.items():
+            selected=choose(paths);formats=defaultdict(int)
+            for path in selected:
+                entry=files[str(path)];cols=list(entry)
+                c.execute("INSERT OR IGNORE INTO media(id,"+",".join(cols)+") VALUES("+",".join("?" for _ in range(len(cols)+1))+")",[uuid.uuid4().hex[:24],*entry.values()])
+                formats[path.suffix.lower()]+=1
+            report.append(dict(phone=files[str(paths[0])]["phone"],source_id=sid,available=len(paths),selected=len(selected),formats=dict(formats)))
+    (DATA/"sample-report.json").write_text(json.dumps(report,indent=2),encoding="utf-8")
+    print(json.dumps(report),flush=True)
 
 
 def models():
@@ -444,6 +409,8 @@ def main():
                         row["id"],
                     ),
                 )
+                from .metadata_support import record_embedded
+                record_embedded(c, row['id'], info, before)
             try:
                 if recognizer is not None:
                     for t, img in frames:

@@ -46,10 +46,11 @@ export default function MediaViewerStage(p:Props){
    };
    el.addEventListener("wheel",wheel,{passive:false});return()=>el.removeEventListener("wheel",wheel);
  },[zoom,pan,box,p.next,p.previous,p.busy]);
- useEffect(()=>{const key=(e:KeyboardEvent)=>{if((e.target as HTMLElement)?.closest('input,textarea,select,video,[contenteditable]'))return;
+ useEffect(()=>{const key=(e:KeyboardEvent)=>{if(saveOpen)return;
+   if((e.target as HTMLElement)?.closest('input,textarea,select,video,[contenteditable]'))return;
    if(e.key==="ArrowLeft"){e.preventDefault();navigate(p.previous);}if(e.key==="ArrowRight"){e.preventDefault();navigate(p.next);}
    if(e.key==="+"||e.key==="="){e.preventDefault();changeZoom(zoom+.5);reveal();}if(e.key==="-"){e.preventDefault();changeZoom(zoom-.5);reveal();}if(e.key==="0"){changeZoom(1);reveal();}
- };window.addEventListener("keydown",key);return()=>window.removeEventListener("keydown",key);},[p.previous,p.next,p.busy,zoom]);
+ };window.addEventListener("keydown",key);return()=>window.removeEventListener("keydown",key);},[p.previous,p.next,p.busy,zoom,saveOpen]);
  const startVideo=async()=>{
    setVideoError("");setPlayingVideo(true);setVideoLoading(true);reveal();
    if(p.expanded)return;

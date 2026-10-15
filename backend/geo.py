@@ -30,6 +30,7 @@ class GeographicSelection(BaseModel):
     model_config = ConfigDict(extra="forbid")
     places: list[str] = Field(default_factory=list, max_length=40)
     unknown: bool = False
+    no_gps: bool = False
     includes: list[Rectangle] = Field(default_factory=list, max_length=20)
     excludes: list[Rectangle] = Field(default_factory=list, max_length=20)
 
@@ -60,6 +61,9 @@ def add_selection(clauses, args, raw):
         )
         args.extend(selection.places * 2)
     if selection.unknown:
+        from .metadata_support import UNKNOWN
+        positives.append('('+UNKNOWN+')')
+    if selection.no_gps:
         positives.append(f"NOT coalesce({VALID},0)")
     for areas, target in [
         (selection.includes, positives),
@@ -133,6 +137,9 @@ def add_location(clauses, args, location, south, north, west, east, lat, lon, ra
         if location == "known":
             clauses.append(VALID)
         elif location == "unknown":
+            from .metadata_support import UNKNOWN
+            clauses.append('('+UNKNOWN+')')
+        elif location == 'no_gps':
             clauses.append(f"NOT coalesce({VALID},0)")
 
 
