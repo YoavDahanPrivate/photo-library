@@ -212,8 +212,9 @@ not free disk space. Display-only HEIC/JPEG hiding leaves both copies stored.
 
 In People, open **Improve matching with saved examples → Analyze matching
 quality**. The background study produces per-person held-back validation results
-without changing assignments. Review the results before enabling adjusted rules;
-then reevaluate. The automatic approval loop uses the enabled rules when started.
+without changing assignments. The always-visible matching-mode banner shows
+which rules are effective. Review the results before enabling adjusted rules;
+enabling automatically reevaluates suggestions. The automatic approval loop uses the enabled rules when started.
 Conservative rules remain available with one button. See the [matching guide](FACE_MATCHING.md)
 for the study's limits and model candidates.
 

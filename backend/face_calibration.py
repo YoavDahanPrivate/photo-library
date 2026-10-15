@@ -43,16 +43,31 @@ def thresholds(c, rows):
     return {item['person_id']:item['proposed'] for item in report['people'] if item['eligible']}, None
 
 
+def profile_mode(c):
+    active=c.execute('SELECT id,report FROM face_match_profiles WHERE active=1 LIMIT 1').fetchone()
+    if not active:
+        return dict(active_id=None,effective_mode='conservative',active_people=0,mode_reason='No calibrated rules have been enabled.')
+    report=json.loads(active['report'])
+    anchors=report['anchors']
+    rows=c.execute("""SELECT f.id,f.person_id,f.embedding FROM faces f JOIN media m ON m.id=f.media_id
+        WHERE f.id IN (SELECT value FROM json_each(?)) AND f.status!='dismissed' AND m.status='ready'""",
+        (json.dumps(list(anchors)),)).fetchall()
+    valid=len(rows)==len(anchors) and all(token(row)==anchors[row['id']] for row in rows)
+    return dict(active_id=active['id'],effective_mode='calibrated' if valid else 'conservative',
+                active_people=sum(person['eligible'] for person in report['people']) if valid else 0,
+                mode_reason='Validated per-person adjustments are enabled.' if valid else 'Saved labels changed. Conservative rules are in use; analyze again.')
+
+
 @router.get('')
 def status():
     with core.db() as c:
-        row = c.execute('SELECT id,report,active,created FROM face_match_profiles ORDER BY created DESC,rowid DESC LIMIT 1').fetchone()
-        active = c.execute('SELECT id FROM face_match_profiles WHERE active=1 LIMIT 1').fetchone()
+        row = c.execute('SELECT id,report,revision,created FROM face_match_profiles ORDER BY created DESC,rowid DESC LIMIT 1').fetchone()
+        mode=profile_mode(c)
         if not row:
-            return dict(report=None,active_id=None)
-        report = json.loads(row['report'])
+            return dict(report=None,report_stale=False,**mode)
+        report=json.loads(row['report'])
         report.pop('anchors',None)
-        return dict(report=dict(id=row['id'],created=row['created'],**report),active_id=active[0] if active else None)
+        return dict(report=dict(id=row['id'],created=row['created'],**report),report_stale=row['revision']!=revision(c),**mode)
 
 
 class Apply(BaseModel):

@@ -71,6 +71,7 @@ def test_analysis_never_assigns_faces_or_enables_rules_and_can_stop(client):
     assert report['eligible_people']==0
     current=api.get('/api/people/calibration').json()
     assert current['active_id'] is None and current['report']['id']==report['profile_id']
+    assert current['effective_mode']=='conservative'
     assert 'anchors' not in current['report']
     assert api.post('/api/people/calibration/apply',json={'profile_id':report['profile_id'],'confirm':True}).status_code==409
     with core.db() as c:
@@ -91,11 +92,16 @@ def test_profile_needs_confirmation_rejects_stale_report_and_preserves_annotatio
         c.execute('INSERT INTO face_match_profiles(id,report,revision) VALUES(?,?,?)',('fixture',json.dumps(report),revision(c)))
     assert api.post('/api/people/calibration/apply',json={'profile_id':'fixture'}).status_code==422
     assert api.post('/api/people/calibration/apply',json={'profile_id':'fixture','confirm':True}).status_code==200
-    assert api.get('/api/people/calibration').json()['active_id']=='fixture'
+    enabled=api.get('/api/people/calibration').json()
+    assert enabled['active_id']=='fixture' and enabled['effective_mode']=='calibrated' and enabled['active_people']==1
+    assert enabled['report_stale'] is False
     assert reevaluate()['profile_warning'] is None
     with core.db() as c:
         c.execute("UPDATE faces SET person_id=2 WHERE id='a'")
         c.execute("INSERT INTO actions(description,previous) VALUES('correction','{}')")
+    effective=api.get('/api/people/calibration').json()
+    assert effective['active_id']=='fixture' and effective['effective_mode']=='conservative'
+    assert effective['report_stale'] is True
     assert reevaluate()['profile_warning']
     assert api.post('/api/people/calibration/apply',json={'profile_id':'fixture','confirm':True}).status_code==409
     assert api.post('/api/people/calibration/reset',json={}).status_code==200

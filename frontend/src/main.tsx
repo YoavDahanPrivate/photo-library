@@ -206,6 +206,7 @@ function App() {
   const [peopleProgressError,setPeopleProgressError]=useState("");
   const completedPeopleOperations=useRef(new Set<string>());
   const observedPeopleOperations=useRef(new Set<string>());
+  const lastPeopleOperationSeen=useRef<string|null|undefined>(undefined);
   const peopleReviewVersions=useRef(new Map<string,number>());
   const peopleWorking=peopleOperation?.state==="queued"||peopleOperation?.state==="running";
   const [approvalCount,setApprovalCount]=useState(0);
@@ -669,7 +670,9 @@ function App() {
         setPeopleOperation(previous=>previous?.id===operation?.id&&previous?.state===operation?.state&&previous?.updated_at===operation?.updated_at&&previous?.stop_requested===operation?.stop_requested?previous:operation);
         running=operation?.state==="queued"||operation?.state==="running";
         if(operation&&running)observedPeopleOperations.current.add(operation.id);
-        if(operation&&!running&&!observedPeopleOperations.current.has(operation.id))completedPeopleOperations.current.add(operation.id);
+        const firstOperationPoll=lastPeopleOperationSeen.current===undefined;
+        lastPeopleOperationSeen.current=operation?.id??null;
+        if(firstOperationPoll&&operation&&!running&&!observedPeopleOperations.current.has(operation.id))completedPeopleOperations.current.add(operation.id);
         const reviewChanged=operation&&running&&(operation.review_revision||0)>(peopleReviewVersions.current.get(operation.id)||0);
         if(operation&&(reviewChanged||(!running&&!completedPeopleOperations.current.has(operation.id)))){
           const rows=await api<typeof suggestions>("/people/suggestions");
@@ -1218,7 +1221,7 @@ function App() {
                   <p className="small-note">
                     Confidence is based on similarity, separation from other people, and supporting photos—not an accuracy percentage. Choose individual approvals, Approve all, or the high-confidence approval loop.
                   </p>
-                  <MatchingQuality revision={revision} working={!!peopleWorking||busy||approvingAll||!!savingReviews.length} calibrating={!!peopleWorking&&peopleOperation?.kind==='calibrate'} analyze={()=>void reevaluatePeople('calibrate')} changed={()=>{setSuggestions(rows=>rows.map(row=>({...row,confidence:'lower'})));setReviewMessage('Matching rules updated. Reevaluate unassigned faces to refresh the matches.');setRevision(value=>value+1);}}/>
+                  <MatchingQuality revision={revision} working={!!peopleWorking||busy||approvingAll||!!savingReviews.length} calibrating={!!peopleWorking&&peopleOperation?.kind==='calibrate'} analyze={()=>void reevaluatePeople('calibrate')} changed={()=>{setSuggestions(rows=>rows.map(row=>({...row,confidence:'lower'})));setRevision(value=>value+1);void reevaluatePeople();}}/>
                   <div className="review-batch-toolbar">
                     <label>Suggested person<select aria-label="Filter suggested person" value={reviewPerson} onChange={event=>setReviewPerson(event.target.value)}><option value="">All people</option>{reviewPeople.map(([id,name])=><option key={id} value={id}>{name}</option>)}</select></label>
                     <label>Review order<select aria-label="Match review order" value={reviewOrder} onChange={event=>setReviewOrder(event.target.value)}><option value="strongest">Strongest first</option><option value="dates">Spread across dates</option></select></label>

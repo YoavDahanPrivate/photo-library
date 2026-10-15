@@ -23,11 +23,15 @@ against **saved labels**, which may include mistakes and previous automatic
 confirmations. Related burst photos can remain correlated. Zero observed errors
 in a finite test is not a guaranteed accuracy percentage or proof of identity.
 
+The People page always shows the effective **Matching rules: Conservative /
+Calibrated** mode, including fallback when saved labels have changed. A report
+alone does not enable calibrated rules.
+
 Review the report, then choose **Enable reviewed matching rules**. Enabling
-clears existing high-confidence flags until the next reevaluation publishes a
-consistent replacement. It does not approve faces. The optional Auto approve
+automatically starts reevaluation and clears existing high-confidence flags
+until that pass publishes a consistent replacement. It does not approve faces. The optional Auto approve
 loop uses enabled rules when the user starts it. **Use conservative rules**
-disables the profile; reevaluate afterwards. A stale report is rejected if
+disables the profile and automatically reevaluates afterwards. A stale report is rejected if
 reviews changed before enablement. Relabelled/deleted examples used by an
 enabled profile cause fallback to conservative matching until another analysis.
 

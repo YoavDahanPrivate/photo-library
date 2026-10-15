@@ -134,3 +134,24 @@ wrong matches among accepted adjustments in that study, not a guarantee of
 accuracy on unseen photographs. Reports are against saved labels and can
 include prior automatic confirmations. Model candidates and remaining crop/model
 work are documented in [Face matching](FACE_MATCHING.md).
+
+## Matching activation correction
+
+The subsequent user report of unchanged match yield exposed an activation and
+visibility gap: the report was available but calibrated rules were still off.
+The latest auto run had consumed five conservative high matches. A read-only
+audit compared 256 current candidate faces across all 70 people (17,920
+candidate/person comparisons) against fresh calculations and found no cache
+discrepancies. The saved report projected 5,877 high suggestions in the current
+queue; this was not an accuracy guarantee.
+
+Refreshed and applied the calibration under the approved matching plan, then
+ran reevaluation without automatic approval. The resulting queue contained
+5,877 high and 4,595 lower suggestions; assignment count was zero and the latest
+approval/action records were unchanged. Effective per-person calibration remained
+enabled for 26 people. Added persistent effective-mode reporting, stale-report
+feedback, automatic reevaluation on enable/reset, and cross-browser completion
+refresh. The correction passed 30 focused backend tests and all three browser
+workflows. A live browser check used API-write blocking to verify displayed
+mode/counts and mobile layout. The service restart was for a read endpoint and
+static UI only, with rollback copies and no schema migration.

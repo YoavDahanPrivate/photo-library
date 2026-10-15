@@ -36,6 +36,7 @@ const server=http.createServer((req,res)=>{const name=new URL(req.url,'http://lo
   await page.locator('.sidebar nav').getByRole('button',{name:/^People/}).click();
   const lower=page.getByRole('region',{name:'Lower-confidence matches'});
   await lower.getByRole('button',{name:'Approve all 96',exact:true}).waitFor();
+  await page.getByText('Matching rules: Conservative',{exact:true}).waitFor();
   await page.getByRole('checkbox',{name:'Refresh matches after reviewing'}).uncheck();
   await page.getByRole('combobox',{name:'Filter suggested person'}).selectOption('1');
   await lower.getByRole('button',{name:'Approve all 60',exact:true}).waitFor();
@@ -48,19 +49,30 @@ const server=http.createServer((req,res)=>{const name=new URL(req.url,'http://lo
   await page.getByRole('button',{name:'Approve selected 0',exact:true}).waitFor();
   assert.equal(approved.length,1);assert.equal(approved[0].length,47);assert(approved[0].every(row=>row.person_id===1));
   assert.equal(starts,0,'Refresh was explicitly disabled');
-  await page.getByText('Improve matching with saved examples',{exact:false}).first().click();
+  await page.locator('.matching-quality>summary').click();
   await page.getByRole('button',{name:'Analyze matching quality',exact:true}).click();
   await page.getByRole('button',{name:'Enable reviewed matching rules',exact:true}).waitFor({timeout:15000});
   assert.equal(analyzes,1);assert.equal(enabled,null);assert.equal(approved.length,1,'Analysis must not approve faces');
   await page.getByRole('button',{name:'Enable reviewed matching rules',exact:true}).click();
   await page.getByRole('button',{name:'Use conservative rules',exact:true}).waitFor();
+  await page.getByText('Matching rules: Calibrated',{exact:true}).waitFor();
   assert.equal(enabled,'fixture-profile');assert.equal(approved.length,1);
+  await page.waitForFunction(()=>document.querySelector('.people-operation')?.textContent.includes('Comparing updated faces'),{},{timeout:10000});
+  assert.equal(starts,1,'Enabling matching rules must automatically reevaluate');
+  job={...job,state:'completed',phase:'Matches ready for review',updated_at:Date.now()/1000,result:{suggestions:matches.length}};
+  await page.waitForFunction(()=>{const checkbox=document.querySelector('.review-card-selection input');return checkbox&&!checkbox.disabled;},{},{timeout:15000});
   await page.getByRole('checkbox',{name:'Refresh matches after reviewing'}).check();
+  await lower.locator('.suggestion-grid>div').first().getByRole('checkbox').check();
+  await page.getByRole('button',{name:'Approve selected 1',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('.people-operation')?.textContent.includes('Comparing updated faces'),{},{timeout:15000});
-  assert.equal(starts,1);assert.equal(approved.length,1,'Background refresh must not approve anything');
+  assert.equal(starts,2);assert.equal(approved.length,2,'Background refresh must not approve anything');
+  // A job started elsewhere can complete between polls. Its queue still needs refreshing.
+  matches.push({face_id:'external',person_id:1,name:'Maya',score:.65,margin:.1,support:2,confidence:'lower',source_person_id:null});
+  job={...job,id:'d'.repeat(32),state:'completed',phase:'Matches ready for review',updated_at:Date.now()/1000,result:{suggestions:matches.length}};
+  await lower.getByRole('heading',{name:'Lower-confidence matches (13)',exact:true}).waitFor({timeout:15000});
   await page.setViewportSize({width:390,height:844});
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Mobile layout overflow');
   assert.deepEqual(errors,[]);
-  console.log('Matching quality: person filter, date variety, exact selected batch, report preview/enable, background refresh and mobile layout passed');
+  console.log('Matching quality: person filter, date variety, exact selected batch, report preview/enable, visible active rules, automatic reevaluation on enable, background/external-job refresh and mobile layout passed');
  }finally{await browser.close();await new Promise(resolve=>server.close(resolve));}
 })().catch(error=>{console.error(error);process.exitCode=1;});

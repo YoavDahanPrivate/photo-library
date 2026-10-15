@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-15 — Make calibrated matching activation explicit
+
+People now always shows the effective matching rules, flags stale reports and
+explains conservative fallback. Enabling/resetting rules automatically starts
+reevaluation. Completed jobs started elsewhere refresh the queue even when the
+browser misses their running state between polls. Validated with 30 focused
+backend tests and all three browser workflows.
+
 ## 2026-10-15 — Matching quality and review batches
 
 Added a stoppable, photo-disjoint calibration study with explicit profile
