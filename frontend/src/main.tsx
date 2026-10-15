@@ -1,3 +1,4 @@
+import MatchingQuality from "./MatchingQuality";
 import PeopleProgress,{type PeopleOperation} from "./PeopleProgress";
 import ReviewPager from "./ReviewPager";
 import {readApiResponse} from "./ApiResponse";
@@ -181,6 +182,7 @@ function App() {
       person_id: number;
       name: string;
       score: number;
+      margin?:number;media_id?:string;taken?:string|null;support?:number|null;score_cutoff?:number|null;margin_cutoff?:number|null;
       source_person_id: number | null;
       confidence: "high" | "lower";
     }[]
@@ -209,6 +211,31 @@ function App() {
   const [approvalCount,setApprovalCount]=useState(0);
   const [reviewPages,setReviewPages]=useState({high:0,lower:0});
   const reviewPageSize=48;
+  const [reviewPerson,setReviewPerson]=useState('');
+  const [reviewOrder,setReviewOrder]=useState('strongest');
+  const [selectedReviews,setSelectedReviews]=useState<string[]>([]);
+  const selectedReviewSet=new Set(selectedReviews);
+  const selectedMatchCount=suggestions.reduce((count,row)=>count+Number(selectedReviewSet.has(row.face_id)),0);
+  const [reviewChanges,setReviewChanges]=useState(0);
+  const refreshedReviewChanges=useRef(0);
+  const [refreshAfterReviews,setRefreshAfterReviews]=useState(()=>{try{return localStorage.getItem('dahan.refreshMatchesAfterReview')!=='false';}catch{return true;}});
+  useEffect(()=>{try{localStorage.setItem('dahan.refreshMatchesAfterReview',String(refreshAfterReviews));}catch{}},[refreshAfterReviews]);
+  useEffect(()=>{setReviewPages({high:0,lower:0});setSelectedReviews([]);},[reviewPerson,reviewOrder]);
+  const reviewPeople=Array.from(new Map(suggestions.map(row=>[row.person_id,row.name])).entries()).sort((a,b)=>a[1].localeCompare(b[1]));
+  const reviewMatches=(level:'high'|'lower')=>{
+    const rows=suggestions.filter(row=>row.confidence===level&&(!reviewPerson||String(row.person_id)===reviewPerson));
+    if(reviewOrder==='strongest')return rows;
+    const dates=new Map<string,typeof suggestions>();
+    for(const row of rows){const key=row.person_id+':'+(row.taken?.slice(0,10)||row.media_id||row.face_id);const bucket=dates.get(key)||[];bucket.push(row);dates.set(key,bucket);}
+    const result:typeof suggestions=[];let active=Array.from(dates.values()),index=0;
+    while(active.length){const next:typeof active=[];for(const bucket of active){result.push(bucket[index]);if(index+1<bucket.length)next.push(bucket);}active=next;index++;}
+    return result;
+  };
+  const matchingReason=(row:(typeof suggestions)[number])=>row.confidence==='high'?'Strong match with supporting photographs':[
+    row.score<(row.score_cutoff??.70)?'Needs a stronger similarity':null,
+    (row.margin??1)<(row.margin_cutoff??.12)?'Another person is also similar':null,
+    row.support!=null&&row.support<2?'Needs another supporting photograph':null,
+  ].filter(Boolean).join(' · ')||'Review this match before assigning';
   const [page, setPage] = useState<"library" | "people">("library");
   const [peopleQuery, setPeopleQuery] = useState("");
   const [geo, setGeo] = useState<GeoSelection>(emptyGeo);
@@ -591,9 +618,10 @@ function App() {
           : { face_id: s.face_id, person_id: s.person_id },
       );
       completedReviews.current.add(s.face_id);
+      setReviewChanges(value=>value+1);
       setSuggestions((rows) => rows.filter((row) => row.face_id !== s.face_id));
       setReviewMessage(
-        "Saved. Keep reviewing these matches. Reevaluate when ready to use your latest confirmations and corrections.",
+        refreshAfterReviews?"Saved. Matches will refresh in the background after you pause reviewing.":"Saved. Reevaluate when ready to use your latest confirmations and corrections.",
       );
       setRevision((v) => v + 1);
     } catch (e) {
@@ -614,8 +642,9 @@ function App() {
       });
       const ids = new Set(matches.map(row => row.face_id));
       ids.forEach(id => completedReviews.current.add(id));
+      setSelectedReviews([]);setReviewChanges(value=>value+1);
       setSuggestions(rows => rows.filter(row => !ids.has(row.face_id)));
-      setReviewMessage(`Saved ${result.approved.toLocaleString()} assignments. You can undo this batch. Reevaluate when ready to find more matches using these confirmations.`);
+      setReviewMessage(`Saved ${result.approved.toLocaleString()} assignments. You can undo this batch. ${refreshAfterReviews?"Matches will refresh in the background after you pause reviewing.":"Reevaluate when ready to find more matches."}`);
       setRevision(v => v + 1);
     } catch (e) {
       setReviewMessage("");
@@ -649,6 +678,7 @@ function App() {
           peopleReviewVersions.current.set(operation.id,operation.review_revision||0);
           completedReviews.current.clear();
           setSuggestions(rows);setReviewPages({high:0,lower:0});setRevision(v=>v+1);
+          if(operation.result?.profile_warning)setReviewMessage(operation.result.profile_warning);
         }
       } catch(e){if(active)setPeopleProgressError(String(e));}
       if(active)timer=setTimeout(poll,running?1000:5000);
@@ -658,19 +688,26 @@ function App() {
   useEffect(()=>{
     if(peopleWorking||approvingAll)document.querySelector(".people-operation")?.scrollIntoView({block:"nearest",behavior:"smooth"});
   },[peopleWorking,approvingAll]);
-  const reevaluatePeople=async(kind:"reevaluate"|"auto-approve"="reevaluate")=>{
+  const reevaluatePeople=async(kind:"reevaluate"|"auto-approve"|"calibrate"="reevaluate")=>{
     if(pendingReviews.current.size||peopleWorking)return;
     setBusy(true);
     try {
       const operation=await api<PeopleOperation>("/people/operations/"+kind,{});
+      if(kind!=="calibrate")refreshedReviewChanges.current=reviewChanges;
       observedPeopleOperations.current.add(operation.id);
       setPeopleOperation(operation);setReviewMessage("");setPeopleProgressError("");
     }catch(e){setError(String(e));}finally{setBusy(false);}
   };
+  useEffect(()=>{
+    if(!refreshAfterReviews||reviewChanges<=refreshedReviewChanges.current||peopleWorking||approvingAll||savingReviews.length)return;
+    const timer=setTimeout(()=>{void reevaluatePeople();},8000);
+    return()=>clearTimeout(timer);
+  },[refreshAfterReviews,reviewChanges,peopleWorking,approvingAll,savingReviews.length]);
   const perform = async (path: string, body: unknown) => {
     setBusy(true);
     try {
       await api(path, body);
+      if(path==="/faces/correct"||/^\/people\/\d+\/name$/.test(path))setReviewChanges(value=>value+1);
       if (/^\/people\/\d+\/name$/.test(path)) returnToPeople();
       if (path === "/faces/correct" && group !== null) {
         const remaining = await api<Face[]>(
@@ -1175,16 +1212,24 @@ function App() {
                       disabled={busy || peopleWorking || approvingAll || savingReviews.length > 0}
                       onClick={()=>reevaluatePeople()}
                     >
-                      {peopleWorking ? peopleOperation?.kind==="auto-approve"?"Auto approval running…":"Reevaluation running…" : busy ? "Working…" : "Reevaluate unassigned faces"}
+                      {peopleWorking ? peopleOperation?.kind==="calibrate"?"Calibration running…":peopleOperation?.kind==="auto-approve"?"Auto approval running…":"Reevaluation running…" : busy ? "Working…" : "Reevaluate unassigned faces"}
                     </button>
                   </div>
                   <p className="small-note">
                     Confidence is based on similarity, separation from other people, and supporting photos—not an accuracy percentage. Choose individual approvals, Approve all, or the high-confidence approval loop.
                   </p>
+                  <MatchingQuality revision={revision} working={!!peopleWorking||busy||approvingAll||!!savingReviews.length} calibrating={!!peopleWorking&&peopleOperation?.kind==='calibrate'} analyze={()=>void reevaluatePeople('calibrate')} changed={()=>{setSuggestions(rows=>rows.map(row=>({...row,confidence:'lower'})));setReviewMessage('Matching rules updated. Reevaluate unassigned faces to refresh the matches.');setRevision(value=>value+1);}}/>
+                  <div className="review-batch-toolbar">
+                    <label>Suggested person<select aria-label="Filter suggested person" value={reviewPerson} onChange={event=>setReviewPerson(event.target.value)}><option value="">All people</option>{reviewPeople.map(([id,name])=><option key={id} value={id}>{name}</option>)}</select></label>
+                    <label>Review order<select aria-label="Match review order" value={reviewOrder} onChange={event=>setReviewOrder(event.target.value)}><option value="strongest">Strongest first</option><option value="dates">Spread across dates</option></select></label>
+                    <label className="review-refresh"><input type="checkbox" checked={refreshAfterReviews} onChange={event=>setRefreshAfterReviews(event.target.checked)}/>Refresh matches after reviewing</label>
+                    <button className="outline approve-all-button" disabled={busy||!!peopleWorking||approvingAll||!!savingReviews.length||!selectedMatchCount} onClick={()=>void approveSuggestions(suggestions.filter(row=>selectedReviewSet.has(row.face_id)))}>Approve selected {selectedMatchCount}</button>
+                    {!!selectedReviews.length&&<button className="outline" onClick={()=>setSelectedReviews([])}>Clear selection</button>}
+                  </div>
                   {reviewMessage && <p role="status">{reviewMessage}</p>}
                   <div className="confidence-sections">
                     {(["high", "lower"] as const).map((level) => {
-                      const sectionMatches = suggestions.filter((s) => s.confidence === level);
+                      const sectionMatches = reviewMatches(level);
                       const sectionPage=Math.min(reviewPages[level],Math.max(0,Math.ceil(sectionMatches.length/reviewPageSize)-1));
                       return <section key={level} aria-label={level === "high" ? "High-confidence matches" : "Lower-confidence matches"}>
                         <h3>{level === "high" ? "High-confidence matches" : "Lower-confidence matches"} ({sectionMatches.length})</h3>
@@ -1192,7 +1237,8 @@ function App() {
                         <button className="outline approve-all-button" disabled={busy || peopleWorking || approvingAll || !!savingReviews.length || !sectionMatches.length} onClick={() => approveSuggestions(sectionMatches)}><Check size={16} aria-hidden="true"/>{approvingAll ? "Saving assignments…" : `Approve all ${sectionMatches.length}`}</button>
                         {level==="high"&&<button className="outline approve-all-button auto-approve-button" disabled={busy||peopleWorking||approvingAll||!!savingReviews.length||!sectionMatches.length} onClick={()=>reevaluatePeople("auto-approve")}><Repeat2 size={16} aria-hidden="true"/>Auto approve high-confidence</button>}
                         </div>
-                        {level==="high"&&<p className="small-note auto-approve-help">Auto approve repeats approval and reevaluation until no high-confidence matches remain, or you press Stop. Completed approvals stay saved; each batch can be undone.</p>}
+                        {level==="high"&&<p className="small-note auto-approve-help">Auto approve covers all people in the visible library, including those outside this review filter. It repeats approval and reevaluation until no high-confidence matches remain, or you press Stop. Completed approvals stay saved; each batch can be undone.</p>}
+                        {!!sectionMatches.length&&<button className="outline review-select-page" disabled={busy||!!peopleWorking||approvingAll||!!savingReviews.length} onClick={()=>setSelectedReviews(previous=>Array.from(new Set([...previous,...sectionMatches.slice(sectionPage*reviewPageSize,(sectionPage+1)*reviewPageSize).map(row=>row.face_id)])))}>Select this page ({Math.min(reviewPageSize,sectionMatches.length-sectionPage*reviewPageSize)})</button>}
                         <ReviewPager page={sectionPage} total={sectionMatches.length} size={reviewPageSize} onPage={value=>setReviewPages(previous=>({...previous,[level]:value}))}/>
                         <div className="suggestion-grid">
                         {sectionMatches.slice(sectionPage*reviewPageSize,(sectionPage+1)*reviewPageSize).map((s) => (
@@ -1205,7 +1251,10 @@ function App() {
                               loading="lazy" decoding="async"
                               alt="Face suggested for assignment"
                             />
+                            <label className="review-card-selection"><input type="checkbox" aria-label={'Select match '+s.face_id} disabled={busy||!!peopleWorking||approvingAll||!!savingReviews.length} checked={selectedReviews.includes(s.face_id)} onChange={event=>setSelectedReviews(previous=>event.target.checked?[...previous,s.face_id]:previous.filter(id=>id!==s.face_id))}/>Select</label>
                             <span>Possibly {s.name}</span>
+                            <small className="match-evidence">{matchingReason(s)}</small>
+                            {s.taken&&<small>{s.taken.slice(0,10)}</small>}
                             {s.source_person_id !== null &&
                               s.source_person_id > 0 && (
                                 <button

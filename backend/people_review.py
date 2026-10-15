@@ -96,7 +96,7 @@ def suggestions():
         return [
             dict(r)
             for r in c.execute(
-                f"SELECT s.*,CASE WHEN EXISTS(SELECT 1 FROM high_confidence_faces h WHERE h.face_id=s.face_id) THEN 'high' ELSE 'lower' END AS confidence,p.name,f.media_id,f.person_id AS source_person_id FROM face_suggestions s JOIN people p ON p.id=s.person_id JOIN faces f ON f.id=s.face_id LEFT JOIN people current_person ON current_person.id=f.person_id WHERE f.status!='dismissed' AND trim(coalesce(current_person.name,''))='' AND trim(coalesce(p.name,''))!='' AND EXISTS(SELECT 1 FROM media m WHERE m.id=f.media_id AND {VISIBLE}) ORDER BY s.score DESC,s.face_id"
+                f"SELECT s.*,CASE WHEN EXISTS(SELECT 1 FROM high_confidence_faces h WHERE h.face_id=s.face_id) THEN 'high' ELSE 'lower' END AS confidence,p.name,f.media_id,f.person_id AS source_person_id,m.taken,e.support,e.score_cutoff,e.margin_cutoff FROM face_suggestions s JOIN people p ON p.id=s.person_id JOIN faces f ON f.id=s.face_id JOIN media m ON m.id=f.media_id LEFT JOIN face_match_evidence e ON e.face_id=f.id LEFT JOIN people current_person ON current_person.id=f.person_id WHERE f.status!='dismissed' AND trim(coalesce(current_person.name,''))='' AND trim(coalesce(p.name,''))!='' AND EXISTS(SELECT 1 FROM media m WHERE m.id=f.media_id AND {VISIBLE}) ORDER BY s.score DESC,s.face_id"
             )
         ]
 
@@ -122,6 +122,9 @@ def reevaluate(progress=lambda *args, **kwargs: None):
         revision=tuple(revision)
         rows=c.execute("SELECT f.id,f.media_id,f.person_id,f.status,f.embedding,p.name FROM faces f LEFT JOIN people p ON p.id=f.person_id WHERE f.status!='dismissed' AND EXISTS(SELECT 1 FROM media m WHERE m.id=f.media_id AND m.status='ready')").fetchall()
         rejected={(r[0],r[1]) for r in c.execute("SELECT face_id,person_id FROM face_rejections")}
+        from .face_calibration import thresholds
+        policy,profile_warning=thresholds(c,rows)
+        profile_revision=tuple(r[0] for r in c.execute('SELECT id FROM face_match_profiles WHERE active=1'))
     saved={};candidates=[]
     progress("Preparing face references", 0, len(rows), "faces")
     for index,row in enumerate(rows):
@@ -134,44 +137,33 @@ def reevaluate(progress=lambda *args, **kwargs: None):
         else: candidates.append((row,v))
     groups=[(person,np.stack([v for v,_ in refs]),np.asarray([mid for _,mid in refs])) for person,refs in saved.items()]
     plans=[]
-    comparisons=0
-    total_comparisons=len(candidates)*sum(len(refs) for _,refs,_ in groups)
-    progress("Comparing faces", 0, total_comparisons, "comparisons")
-    for offset in range(0,len(candidates),128):
-        batch=candidates[offset:offset+128]
-        matrix=np.stack([v for _,v in batch])
-        rankings=[[] for _ in batch]
-        for person,refs,media_ids in groups:
-            best=np.full(len(batch),-1.0)
-            support=[set() for _ in batch]
-            for start in range(0,len(refs),512):
-                scores=matrix @ refs[start:start+512].T
-                comparisons+=len(batch)*len(refs[start:start+512])
-                progress("Comparing faces", comparisons, total_comparisons, "comparisons")
-                best=np.maximum(best,scores.max(axis=1))
-                mids=media_ids[start:start+512]
-                for i,(row,_) in enumerate(batch):
-                    if len(support[i])<2:
-                        support[i].update(mids[(scores[i]>=0.55)&(mids!=row["media_id"])].tolist())
-            for i in range(len(batch)): rankings[i].append((float(best[i]),person,len(support[i])))
-        for (row,_),scores in zip(batch,rankings):
-            scores.sort(reverse=True)
-            if not scores: continue
-            score,person,support=scores[0]
-            margin=score-(scores[1][0] if len(scores)>1 else 0)
-            if (row["id"],person) in rejected or score<0.55 or margin<0.06: continue
-            plans.append((row["id"],person,score,margin,score>=0.70 and margin>=0.12 and support>=2))
+    evidence=[]
+    from .face_match_cache import compare
+    rankings,comparison_report=compare(candidates,groups,progress)
+    for (row,_),scores in zip(candidates,rankings):
+        scores.sort(reverse=True)
+        if not scores: continue
+        score,person,support=scores[0]
+        margin=score-(scores[1][0] if len(scores)>1 else 0)
+        if (row["id"],person) in rejected or score<0.55 or margin<0.06: continue
+        rule=policy.get(person,dict(score=.70,margin=.12,support=2))
+        plans.append((row["id"],person,score,margin,score>=rule['score'] and margin>=rule['margin'] and support>=2))
+        evidence.append((row['id'],support,rule['score'],rule['margin']))
     progress("Saving suggestions")
     with db() as c:
         c.execute("BEGIN IMMEDIATE")
         if tuple(c.execute("SELECT coalesce(max(id),0),coalesce(sum(undone),0) FROM actions").fetchone())!=revision:
             raise HTTPException(409,"Face corrections changed during matching. Please retry.")
+        if tuple(r[0] for r in c.execute('SELECT id FROM face_match_profiles WHERE active=1'))!=profile_revision:
+            raise HTTPException(409,"Matching rules changed during matching. Please retry.")
         progress("Saving suggestions")
+        c.execute("DELETE FROM face_match_evidence")
+        c.executemany("INSERT INTO face_match_evidence VALUES(?,?,?,?)",evidence)
         c.execute("DELETE FROM face_suggestions")
         c.execute("DELETE FROM high_confidence_faces")
         c.executemany("INSERT INTO face_suggestions VALUES(?,?,?,?)",[p[:4] for p in plans])
         c.executemany("INSERT INTO high_confidence_faces VALUES(?)",[(p[0],) for p in plans if p[4]])
-    return {"evaluated":len(candidates),"assigned":0,"suggestions":len(plans),"saved_people":len(saved)}
+    return {"evaluated":len(candidates),"assigned":0,"suggestions":len(plans),"saved_people":len(saved),"profile_warning":profile_warning,**comparison_report}
 
 @router.get("/{group_id}/match")
 def group_match(group_id: int):

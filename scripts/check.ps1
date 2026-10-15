@@ -10,7 +10,7 @@ try {
     & npm.cmd run build --prefix frontend -- --configLoader runner
     if ($LASTEXITCODE -ne 0) { throw 'Frontend type check/build failed.' }
     if ($BrowserChecks) {
-        foreach ($taskCheck in @('people_progress_ui.cjs','auto_review_ui.cjs')) {
+        foreach ($taskCheck in @('people_progress_ui.cjs','auto_review_ui.cjs','matching_quality_ui.cjs')) {
             if ($PlaywrightModule) { & node (Join-Path $taskProject ('tests\'+$taskCheck)) $PlaywrightModule }
             else { & node (Join-Path $taskProject ('tests\'+$taskCheck)) }
             if ($LASTEXITCODE -ne 0) { throw "Browser check failed: $taskCheck" }

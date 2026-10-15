@@ -135,6 +135,11 @@ def start():
     return start_operation('reevaluate')
 
 
+@router.post('/calibrate', status_code=202)
+def start_calibration():
+    return start_operation('calibrate')
+
+
 @router.post('/auto-approve', status_code=202)
 def start_auto_approve():
     return start_operation('auto-approve')
@@ -148,7 +153,7 @@ def start_operation(kind):
                 raise HTTPException(409, 'Another face operation is running. Stop it or wait for it to finish before starting this operation.')
             return existing
         identity = uuid.uuid4().hex
-        state = dict(id=identity, kind=kind, state='queued', phase='Starting automatic approval' if kind=='auto-approve' else 'Starting reevaluation',
+        state = dict(id=identity, kind=kind, state='queued', phase='Starting calibration' if kind=='calibrate' else 'Starting automatic approval' if kind=='auto-approve' else 'Starting reevaluation',
                      round=0, rounds_completed=0, approved_total=0, review_revision=0,
                      started_at=time.time(), updated_at=time.time(), processed=None, total=None)
         write(job_path(identity), state)
@@ -213,13 +218,16 @@ def work(identity):
             last_write = now
 
     try:
-        if automatic:
+        if state.get('kind') == 'calibrate':
+            from .face_calibration import analyze
+            result = analyze(progress=progress)
+        elif automatic:
             from .automatic_review import run
             result = run(state, progress, save, check_stop)
         else:
             progress('Reading saved faces')
             result = reevaluate(progress=progress)
-        state.update(state='completed', phase='Auto approval finished' if automatic else 'Matches ready for review', result=result, updated_at=time.time())
+        state.update(state='completed', phase='Calibration ready to review' if state.get('kind')=='calibrate' else 'Auto approval finished' if automatic else 'Matches ready for review', result=result, updated_at=time.time())
     except Cancelled:
         state.update(state='cancelled', phase='Auto approval stopped' if automatic else 'Reevaluation stopped', processed=None, total=None, updated_at=time.time())
     except HTTPException as error:

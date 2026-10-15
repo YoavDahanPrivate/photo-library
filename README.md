@@ -15,6 +15,7 @@ unauthenticated server off the public internet.
 - [User guide](docs/USER_GUIDE.md): databases, relayout, scanning, People, metadata and mobile workflows.
 - [Operations](docs/OPERATIONS.md): startup, storage locations, stopping work, backups, recovery and moving disks.
 - [15 October 2026 milestone](docs/MILESTONE-2026-10-15.md): implementation summary, validation and remaining work.
+- [Face matching](docs/FACE_MATCHING.md): calibration, review batches, cached comparisons and model candidates.
 - [Changelog](CHANGELOG.md).
 
 ## Features
@@ -111,8 +112,8 @@ loop. With Playwright and Edge available:
 .\scripts\check.ps1 -BrowserChecks -PlaywrightModule 'C:\path\to\node_modules\playwright'
 ```
 
-The current source passed **395 backend tests**, the production build and both
-browser checks, including six new first-run/reference-installation tests. Migration, removal, interruption and approval tests used isolated
+The current source passed **403 backend tests**, the production build and three
+browser checks, including independent-install and matching-quality tests. Migration, removal, interruption and approval tests used isolated
 catalogues and disposable media. Physical iPhone/native-share and installation
 on a separate physical PC remain separate release checks; isolated first-run
 tests also exercise the Windows launcher.

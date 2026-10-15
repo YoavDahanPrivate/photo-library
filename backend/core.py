@@ -78,6 +78,8 @@ def init():
             if name not in columns:
                 c.execute(f"ALTER TABLE faces ADD COLUMN {name} INTEGER")
 
+        from .face_calibration import migrate as migrate_matching
+        migrate_matching(c)
         from .source_management import migrate
         migrate(c)
         from .metadata_support import migrate as migrate_metadata

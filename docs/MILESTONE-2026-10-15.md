@@ -110,3 +110,27 @@ write screenshots only into temporary/explicit QA output folders.
 - Semantic/object/animal/occasion search and Live Photo pairing remain future work.
 - Fixture-tested backup/checkpoint behavior does not replace a tested recovery
   drill or reliable hardware. Runtime/originals/credentials are outside Git.
+
+## Matching quality follow-up
+
+Added a background photo-disjoint calibration report, explicit per-person profile
+enable/reset, conservative fallback after relabelled examples, selected-batch
+review, person/date filters, confidence evidence and optional background refresh.
+Unchanged face comparisons are cached with reference/candidate invalidation;
+corrupt or partial caches fall back to recomputation. SFace remains active.
+
+Validation: the 403-test full regression suite, nine focused matching/cache
+checks after final hardening, frontend build and all three mocked browser checks
+passed. A read-only live browser check verified the report and mobile layout,
+with API writes blocked. Source/runtime catalogue migrations add only new tables.
+The deployed server was restarted only after confirming scans/face jobs were
+idle and backing up/checking both SQLite databases. Post-deployment fingerprints
+verified faces/embeddings, people, approvals/rejections, history and registered
+roots were unchanged. The generated report is inactive until explicitly enabled.
+
+An isolated reference study and the deployed analysis agreed on 26 eligible
+people and 153 additional correct held-back matches. There were no observed
+wrong matches among accepted adjustments in that study, not a guarantee of
+accuracy on unseen photographs. Reports are against saved labels and can
+include prior automatic confirmations. Model candidates and remaining crop/model
+work are documented in [Face matching](FACE_MATCHING.md).

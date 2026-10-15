@@ -2738,3 +2738,13 @@ main.library-workspace-page {height:100dvh;display:flex;flex-direction:column;ov
 .people-auto-totals{display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;margin:12px 0 4px;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;}
 .people-auto-totals strong{padding:5px 10px;border-radius:7px;background:var(--theme-soft);color:var(--green);font-weight:600;}
 .people-operation-details .people-stop-button{display:inline-flex;align-items:center;justify-content:center;gap:7px;}
+
+/* Face matching evidence and intentional review batches. */
+.matching-quality{border:1px solid var(--border,#dfe4dc);border-radius:16px;margin:20px 0;background:var(--surface,#fff)}
+.matching-quality>summary{display:flex;align-items:center;gap:10px;padding:16px 18px;font-weight:650;cursor:pointer;flex-wrap:wrap}
+.matching-quality>summary>span{font-size:12px;font-weight:400;color:var(--muted,#687367);margin-left:auto}
+.matching-quality-body{padding:0 18px 18px}.matching-quality-body h3{margin-top:4px}.matching-quality-body p{max-width:850px}
+.matching-report-summary{display:grid;gap:7px;padding:16px;background:#eef4e9;border-radius:12px;margin-top:16px}
+.matching-report-table{overflow:auto;max-height:360px;margin:16px 0}.matching-report-table table{border-collapse:collapse;width:100%;min-width:680px;font-size:13px}.matching-report-table td,.matching-report-table th{padding:11px;text-align:left;border-bottom:1px solid #dfe4dc}.matching-report-table thead{position:sticky;top:0;background:#f4f7f1}
+.matching-enable{border-top:1px solid #dfe4dc;padding-top:8px}.review-batch-toolbar{display:flex;align-items:end;gap:12px;flex-wrap:wrap;margin:18px 0}.review-batch-toolbar>label{display:grid;gap:5px;font-size:13px}.review-batch-toolbar select{min-width:170px}.review-batch-toolbar .review-refresh{display:flex;align-items:center;align-self:center;max-width:250px}.review-refresh input,.review-card-selection input{width:18px;height:18px;flex:0 0 18px;accent-color:#2e5442}.review-card-selection{display:flex;align-items:center;gap:6px;font-size:12px}.match-evidence{color:#677263;line-height:1.4;min-height:32px}.review-select-page{margin:8px 0;font-size:13px}
+@media(max-width:760px){.review-batch-toolbar{align-items:stretch}.review-batch-toolbar>label,.review-batch-toolbar>button{flex:1 1 100%}.review-batch-toolbar .review-refresh{max-width:none}.matching-quality>summary>span{margin-left:28px}.matching-quality-body{padding:0 12px 12px}}

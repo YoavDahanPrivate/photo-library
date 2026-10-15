@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-10-15 — Matching quality and review batches
+
+Added a stoppable, photo-disjoint calibration study with explicit profile
+preview/enable/reset, per-person validation and conservative fallback. Matching
+reuses unchanged comparisons and exposes missing evidence. People now supports
+person filters, date variety, exact selected-batch approval and optional
+debounced background reevaluation after reviews. SFace remains active; model
+comparison and higher-resolution extraction are documented follow-up work.
+
+Validated with 403 backend tests, the frontend build and three mocked browser
+workflows. See [Face matching](docs/FACE_MATCHING.md).
+
 ## 2026-10-15 — Independent first-time installation
 
 Removed household drive paths, preset phone Sources, trusted PC hostnames and

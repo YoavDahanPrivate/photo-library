@@ -877,6 +877,8 @@ def undo():
 from .people_review import router as review_router
 
 app.include_router(review_router)
+from .face_calibration import router as calibration_router
+app.include_router(calibration_router)
 from .manual_faces import router as manual_router
 
 app.include_router(manual_router)

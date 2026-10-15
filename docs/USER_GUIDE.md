@@ -207,3 +207,19 @@ Indexing/layout/metadata edits do not rewrite originals. Duplicate cleanup is a
 separate reviewed action that **moves selected originals** into recoverable
 `.dtrash/dahan-duplicates` folders; restore refuses conflicting paths. Trash does
 not free disk space. Display-only HEIC/JPEG hiding leaves both copies stored.
+
+## Improve face matching and review in batches
+
+In People, open **Improve matching with saved examples → Analyze matching
+quality**. The background study produces per-person held-back validation results
+without changing assignments. Review the results before enabling adjusted rules;
+then reevaluate. The automatic approval loop uses the enabled rules when started.
+Conservative rules remain available with one button. See the [matching guide](FACE_MATCHING.md)
+for the study's limits and model candidates.
+
+Filter suggestions by person, choose strongest-first or spread-across-dates
+ordering, select individual matches or the current page, and approve that exact
+selection as one reversible batch. Cards explain missing confidence evidence.
+Optional refresh after reviewing starts in the background after eight idle
+seconds. Unchanged comparisons are reused, and new corrections/rejections are
+always respected. Original photographs are not rescanned by reevaluation.
