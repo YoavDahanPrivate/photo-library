@@ -1,11 +1,11 @@
 param(
     [string]$ApplicationDirectory = (Split-Path -Parent $PSScriptRoot),
     [string]$PythonPath = '',
-    [string]$RuntimeDirectory = 'C:\DahanPhotoLibraryData\runtime',
-    [string]$DatabaseDirectory = 'D:\DahanPhotoLibraryData\prototype',
-    [string]$SourceDirectory = 'D:\DahanPhotosSync',
-    [string]$LogsDirectory = 'C:\DahanPhotoLibraryData\logs',
-    [string]$BackupDirectory = 'C:\DahanPhotoLibraryData\backups',
+    [string]$RuntimeDirectory = '',
+    [string]$DatabaseDirectory = '',
+    [string]$SourceDirectory = '',
+    [string]$LogsDirectory = '',
+    [string]$BackupDirectory = '',
     [string]$LanAddress = '',
     [ValidateRange(1,65535)][int]$Port = 80,
     [switch]$EnableSchedules,
@@ -14,22 +14,26 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
+Import-DahanConfiguration -ProjectRoot $ApplicationDirectory
 $taskApp = (Resolve-Path -LiteralPath $ApplicationDirectory).Path
 if (-not (Test-Path -LiteralPath (Join-Path $taskApp 'backend\app.py') -PathType Leaf)) { throw 'ApplicationDirectory must contain backend/app.py.' }
 if (-not (Test-Path -LiteralPath (Join-Path $taskApp 'frontend\dist\index.html') -PathType Leaf)) { throw 'Build the frontend before starting production.' }
 $taskPython = Resolve-DahanPython -PythonPath $PythonPath -ProjectRoot $taskApp
 Set-DahanPaths -DataDirectory $RuntimeDirectory -DatabaseDirectory $DatabaseDirectory -SourceDirectory $SourceDirectory
+$RuntimeDirectory = $env:DAHAN_DATA
+$DatabaseDirectory = $env:DAHAN_DATABASE_DIR
+if (-not $LogsDirectory) { $LogsDirectory = $env:DAHAN_LOGS_DIR }
+if (-not $LogsDirectory) { $LogsDirectory = Join-Path (Split-Path -Parent $RuntimeDirectory) 'logs' }
+if (-not $BackupDirectory) { $BackupDirectory = $env:DAHAN_BACKUP_DIR }
+if (-not $BackupDirectory) { $BackupDirectory = Join-Path (Split-Path -Parent $RuntimeDirectory) 'backups' }
+foreach ($taskPath in @($LogsDirectory,$BackupDirectory)) {
+    if ($taskPath -notmatch '^([A-Za-z]:[\\/]|\\\\[^\\]+\\[^\\]+)') { throw 'Use absolute log and backup paths.' }
+}
 $env:DAHAN_REQUIRE_EXISTING_DATABASE = '1'
 $env:DAHAN_BACKUP_DIR = $BackupDirectory
 $env:DAHAN_DISABLE_SCHEDULER = if ($EnableSchedules) { '0' } else { '1' }
 # Reuse this installation's configured address unless explicitly overridden.
-$taskConfig = Join-Path (Split-Path -Parent $taskApp) 'server-config.json'
-if (-not $PSBoundParameters.ContainsKey('LanAddress')) {
-    if ($env:DAHAN_LAN_ADDRESS) { $LanAddress = $env:DAHAN_LAN_ADDRESS }
-    elseif (Test-Path -LiteralPath $taskConfig -PathType Leaf) {
-        $LanAddress = (Get-Content -LiteralPath $taskConfig -Raw | ConvertFrom-Json).lan_address
-    }
-}
+if (-not $PSBoundParameters.ContainsKey('LanAddress') -and $env:DAHAN_LAN_ADDRESS) { $LanAddress = $env:DAHAN_LAN_ADDRESS }
 $taskListen = '127.0.0.1'
 if ($LanAddress) {
     if ([Net.IPAddress]::Parse($LanAddress).AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork) { throw 'LanAddress must be the server IPv4 address.' }

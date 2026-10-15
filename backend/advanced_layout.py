@@ -243,7 +243,7 @@ def confirm(did:str,body:sm.Confirm):
         for child in children:
             cid=sm.identity();new_ids[child['id']]=cid;new_databases.append(cid)
             inherited=[e[len(child['path'])+1:] for e in json.loads(base['exclusions']) if e.startswith(child['path']+'/')]
-            schedule=json.dumps(dict(frequency='off',time='03:00',weekday=6,month_day=1,timezone='Asia/Jerusalem',auto_assign=True))
+            schedule=json.dumps(dict(frequency='off',time='03:00',weekday=6,month_day=1,timezone='UTC',auto_assign=True))
             c.execute('''INSERT INTO library_databases(id,root,alias,layout,exclusions,visible,sync_enabled,schedule,parent_id,parent_path) VALUES(?,?,?,?,?,?,?,?,?,?)''',(cid,str(Path(d['root'])/child['path']),child['alias'],child['layout'],json.dumps(inherited),d['visible'],d['sync_enabled'] if not sm.excluded(child['path'],json.loads(base['exclusions'])) else 0,schedule,did,child['path']))
             prior=next((source for source in old_controls.values() if source['database_id']==did and source['relative_path']==old_assignments[child['path']]['source_key']),None)
             c.execute('UPDATE library_databases SET default_source_visible=?,default_source_sync=? WHERE id=?',(prior['visible'] if prior else d['default_source_visible'],prior['sync_enabled'] if prior else d['default_source_sync'],cid))

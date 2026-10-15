@@ -12,10 +12,12 @@ param(
 $ErrorActionPreference = 'Stop'
 $taskProject = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'common.ps1')
+Import-DahanConfiguration -ProjectRoot (Split-Path -Parent $PSScriptRoot)
 $taskPython = Resolve-DahanPython -PythonPath $PythonPath -ProjectRoot $taskProject
 Set-DahanPaths -DataDirectory $DataDirectory -DatabaseDirectory $DatabaseDirectory -SourceDirectory $SourceDirectory
 $env:DAHAN_DISABLE_SCHEDULER = if ($EnableSchedules) { '0' } else { '1' }
 $env:DAHAN_REQUIRE_EXISTING_DATABASE = if ($RequireExistingDatabase) { '1' } else { '0' }
+if (-not $PSBoundParameters.ContainsKey('LanAddress') -and $env:DAHAN_LAN_ADDRESS) { $LanAddress = $env:DAHAN_LAN_ADDRESS }
 $env:DAHAN_LAN_ADDRESS = $LanAddress
 $taskListen = '127.0.0.1'
 if ($LanAddress) {

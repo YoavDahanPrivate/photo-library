@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Query, Request, Depends
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from .core import DATA, PHONES, db, init, original
+from .core import DATA, db, init, original
 
 from . import storage_runtime
 storage_runtime.initialize(force=True)
@@ -85,14 +85,17 @@ if lan_address:
     allowed_origins.add(f"http://{lan_address}:80")
 
 
-for name in ("dahanoffice", "dahanoffice.local"):
+# Optional installation-specific DNS aliases. No household hostname is built in.
+for name in filter(None, (value.strip().lower() for value in os.environ.get("DAHAN_HOST_ALIASES", "").split(","))):
+    if not all(ch.isalnum() or ch in ".-" for ch in name):
+        raise ValueError("DAHAN_HOST_ALIASES must contain comma-separated DNS hostnames")
     allowed_hosts.add(name)
     allowed_origins.add(f"http://{name}")
     allowed_origins.add(f"http://{name}:80")
 
 @app.middleware("http")
 async def trusted_hosts(request: Request, call_next):
-    host = request.headers.get("host", "").split(":")[0]
+    host = request.headers.get("host", "").split(":")[0].lower()
     if host not in allowed_hosts:
         return JSONResponse(
             {"detail": "Host not enabled for this prototype"}, status_code=403

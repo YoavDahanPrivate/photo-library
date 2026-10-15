@@ -30,36 +30,72 @@ unauthenticated server off the public internet.
 - **Duplicates:** reviewed exact/format-copy cleanup, recoverable trash, restore and display-only HEIC/JPEG copy hiding.
 - **Runtime:** separate application/derivative and SQLite storage, JSON storage errors, health reporting and a supervised production launcher.
 
-## Development setup
+## Install on your own Windows PC
 
-Prerequisites: Python 3.12, Node.js 22+, npm, and storage for derivatives and models.
-Run from the checkout in PowerShell:
+Prerequisites: Python 3.12 (with the Windows `py` launcher), Node.js 22+ with npm,
+internet access during installation, and at least 10 GiB free for scanning in
+addition to the space your thumbnails and previews will need. Clone/download
+this repository, open PowerShell in that folder, then run:
 
 ```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.lock.txt
-npm ci --prefix frontend
-npm run build --prefix frontend -- --configLoader runner
-
-$env:DAHAN_DATA = 'C:\DahanDev\runtime'
-$env:DAHAN_DATABASE_DIR = 'C:\DahanDev\databases'
-$env:DAHAN_SOURCE = 'C:\DahanDev\originals'
-# Create/use your own disposable originals folder for development.
-New-Item -ItemType Directory -Path $env:DAHAN_SOURCE -Force | Out-Null
-.\.venv\Scripts\python.exe -c "from backend.indexer import models; models()"
-.\scripts\start.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\start-production.ps1 -Port 8765
 ```
 
-Open **http://127.0.0.1:8765/**. Configure folders in **Library tools → Databases,
-Sources & Albums** before starting sync. Startup registers/migrates the initial
-legacy root; additional folders are registered through the app. New local
-catalogues can be initialized by this development launcher; installed servers
-use the existing-database guard described in [Operations](docs/OPERATIONS.md).
+Open **http://127.0.0.1:8765/**, then go to **Library tools → Databases, Sources &
+Albums → + Add Database**. Choose/type your own original folder, review the
+suggested Sources/Albums, confirm, and start Sync. A fresh install has **zero
+registered Databases, Sources or media**. No folder on the developer's computer
+is required or registered automatically.
 
-Face models, map references and FFmpeg are needed for the corresponding
-enrichment stages. See the user/operations guides for offline map installation.
-For frontend development, run `npm run dev --prefix frontend` alongside the API;
-Vite proxies `/api` to port 8765.
+The installer creates a local Python environment, installs locked dependencies,
+builds the frontend, downloads face models and public offline map references,
+and initializes both catalogues. Downloads may take several minutes. It stores
+installation paths in ignored `dahan-config.json`; no NAS credentials go there.
+The default runtime/catalogue location is
+`%LOCALAPPDATA%\DahanPhotoLibrary\runtime`. Logs, backups and models are sibling
+folders. Thumbnails are files under `runtime\thumbs`, referenced by SQLite.
+
+Choose different runtime and catalogue disks at installation if desired:
+
+```powershell
+.\scripts\install.ps1 -DataDirectory 'E:\PhotoLibrary\runtime' `
+  -DatabaseDirectory 'F:\PhotoLibrary\catalogues'
+```
+
+Startup reads this installation's configuration. Launchers also accept explicit
+path overrides and environment variables; original folder roots/aliases live in
+the catalogue after registration. A different Windows account uses its own
+default storage unless you explicitly configure a shared installation. Keep
+`dahan-config.json` when backing up, but do not publish it with the source.
+
+`-SkipDependencies` reuses an already provisioned Python/frontend environment;
+`-PythonPath` selects that environment. `-SkipModels` / `-SkipMaps` omit optional
+installation downloads for development, but recognition/location enrichment
+requires those resources before a complete sync. `-CheckOnly` reports intended
+paths without installing or creating a library. Production startup requires
+both databases and never silently recreates a missing catalogue.
+
+This is a PowerShell installer, not yet a signed one-click Windows installer.
+First-run, folder registration, thumbnail creation and restart persistence are
+covered by isolated tests. A completely separate physical PC remains a useful
+release acceptance check.
+
+## Development setup
+
+Use the installer above, then `npm run dev --prefix frontend` alongside
+`scripts/start.ps1`. Vite proxies `/api` to port 8765. The development launcher
+can initialize disposable catalogues; use `-RequireExistingDatabase` for saved
+libraries. Set `DAHAN_DATA` and optionally `DAHAN_DATABASE_DIR` when running
+Python modules directly; the same per-user default applies otherwise.
+
+`DAHAN_SOURCE` is an **optional legacy-upgrade setting**, never required for a
+fresh install. An old catalogue without registered roots needs its original
+root set explicitly during migration. Source folder names are inferred from
+the old records; `DAHAN_LEGACY_SOURCES` can explicitly supply a JSON list of
+additional immediate Source folders. Modern registered libraries keep stable
+identities and annotations when upgraded. See [Operations](docs/OPERATIONS.md)
+before moving an established installation.
 
 ## Verify and release
 
@@ -75,10 +111,11 @@ loop. With Playwright and Edge available:
 .\scripts\check.ps1 -BrowserChecks -PlaywrightModule 'C:\path\to\node_modules\playwright'
 ```
 
-The milestone passed **389 backend tests**, the production build and browser
-checks. Migration, removal, interruption and approval tests used isolated
-catalogues and disposable media. Physical iPhone/native-share and clean-machine
-installation certification remain separate work.
+The current source passed **395 backend tests**, the production build and both
+browser checks, including six new first-run/reference-installation tests. Migration, removal, interruption and approval tests used isolated
+catalogues and disposable media. Physical iPhone/native-share and installation
+on a separate physical PC remain separate release checks; isolated first-run
+tests also exercise the Windows launcher.
 
 Each frontend build has a unique release ID. Deploy hashed assets first,
 `index.html` next and `version.json` last; retain earlier hashed assets for open

@@ -1,5 +1,8 @@
 # Dahan user guide
 
+A new installation starts empty. Add your own original folders through Library tools.
+Installation paths and optional hostnames are local configuration, independent of the developer's computer.
+
 ## Register and manage Databases
 
 Open **Library tools → Databases, Sources & Albums → + Add Database**. Enter an
@@ -76,7 +79,7 @@ reviewed together before one atomic catalogue migration. The most specific rule
 applies, and a child Database owns its entire subtree; parent scans exclude it.
 
 For example, keep A–F as Albums under Photos' original Source while making
-MobileBackup a child Database whose Yoav/Hila/Bar folders become Sources. No
+MobileBackup a child Database whose Alice/Bob/Charlie folders become Sources. No
 original files are moved. Child schedules initially remain off. Hidden/paused
 controls and future-Source policies are preserved; incompatible merges need an
 explicit resolution. Applying migrations waits for active scans to stop and

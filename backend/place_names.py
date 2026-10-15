@@ -59,13 +59,8 @@ def lookup_country(lon, lat, polygons):
     return next(iter(matches.values())) if len(matches) == 1 else None
 
 
-def enrich():
-    init()
-    maps = DATA / "maps"
-    features = json.loads((maps / "countries.geojson").read_text(encoding="utf-8"))[
-        "features"
-    ]
-    polygons = country_polygons(features)
+def build_reference(maps):
+    """Build only the public place index; never open the household catalogue."""
     reference = sqlite3.connect(maps / "gazetteer.sqlite")
     reference.row_factory = sqlite3.Row
     reference.create_function("distance_km", 4, distance_km)
@@ -95,6 +90,17 @@ def enrich():
                 "CREATE INDEX IF NOT EXISTS city_country_lat ON cities(country,lat)"
             )
             reference.commit()
+    return reference
+
+
+def enrich():
+    init()
+    maps = DATA / "maps"
+    features = json.loads((maps / "countries.geojson").read_text(encoding="utf-8"))[
+        "features"
+    ]
+    polygons = country_polygons(features)
+    reference = build_reference(maps)
     with db() as c:
         media = c.execute(
             "SELECT id,latitude,longitude FROM media WHERE status='ready' AND latitude BETWEEN -90 AND 90 AND longitude BETWEEN -180 AND 180"

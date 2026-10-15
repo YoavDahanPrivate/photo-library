@@ -7,7 +7,7 @@
 | Application checkout/release | Python/TypeScript source, built frontend and helper scripts. |
 | `DAHAN_DATA` | Filesystem thumbnails (`thumbs`), crops (`faces`), video frames/previews, display originals, maps and People-operation progress/logs. |
 | `DAHAN_DATABASE_DIR` | `catalogue.sqlite`, `sync.sqlite`, WAL/SHM sidecars and shared scan lock. Defaults to `DAHAN_DATA`. |
-| `DAHAN_SOURCE` | Initial legacy original root. Later roots/aliases are registered in the catalogue. |
+| `DAHAN_SOURCE` | Optional explicit root for upgrading a legacy catalogue; unused on fresh installations. |
 | Sibling `models` directory | Local recognition models/licences. |
 | `DAHAN_BACKUP_DIR` | Consistent pre-operation catalogue backups when supported by that operation. |
 
@@ -17,29 +17,30 @@ They include faces, history, annotations, schedules and discovery/work checkpoin
 Moving only code/derivatives does not change those identities. Original-root
 validation excludes both runtime and database folders.
 
-The current home installation separates the application from the external SSD:
+Fresh installations default to `%LOCALAPPDATA%\DahanPhotoLibrary\runtime`
+for runtime/catalogues, with sibling `models`, `logs` and `backups` folders.
+Run `scripts/install.ps1` once to create an empty library. It saves paths in the
+ignored `dahan-config.json` beside the root launcher. Each owner adds their own
+Databases through Library tools; no original folder or personal device is preset.
 
-| Purpose | Current path |
-| --- | --- |
-| Application | `C:\DahanPhotoLibraryData\library-tools-release` |
-| Independent Python / environment | `C:\DahanPhotoLibraryData\python` / `C:\DahanPhotoLibraryData\venv` |
-| Derivatives / models / logs / backups | `C:\DahanPhotoLibraryData\runtime`, `models`, `logs`, `backups` |
-| Both databases | `D:\DahanPhotoLibraryData\prototype` |
-| Initial local originals | `D:\DahanPhotosSync` |
-
-Other original roots are registered Databases; changing `DAHAN_SOURCE` does not
-relocate their paths. Use the app's Reconnect moved root workflow for originals.
+Keep the application, Python, derivatives and logs on reliable storage. Both
+databases can be on a separate configured disk. Other original roots are
+registered Databases; changing `DAHAN_SOURCE` does not relocate their paths.
+Use Reconnect moved root for originals. Existing installation-level
+`server-config.json` settings are accepted for upgrade compatibility; they
+are local operational state and are never distributed with the project.
 
 ## Start a development server
 
 The README describes environment/dependency/model setup. `scripts/start.ps1`
-selects repository `.venv`, an installation sibling `venv`, or the current C:
-installation; override with `-PythonPath` or `DAHAN_PYTHON`. It requires explicit
-runtime/original paths, defaults to loopback port 8765, and disables schedules.
+selects repository `.venv` or an installation sibling `venv`; override with
+`-PythonPath` or `DAHAN_PYTHON`. It reads local installation configuration,
+defaults to loopback port 8765, and disables schedules. An original root is not
+required. Explicit overrides are useful for disposable development libraries.
 
 ```powershell
 .\scripts\start.ps1 -DataDirectory 'C:\DahanDev\runtime' `
-  -DatabaseDirectory 'C:\DahanDev\databases' -SourceDirectory 'C:\DahanDev\originals'
+  -DatabaseDirectory 'C:\DahanDev\databases'
 ```
 
 Use `-RequireExistingDatabase` for an existing catalogue. Add `-LanAddress` only
@@ -52,30 +53,35 @@ configured LAN host/origin. Add `-EnableSchedules` explicitly to enable schedule
 From a built release that contains the root launcher and `scripts/`:
 
 ```powershell
-& 'C:\DahanPhotoLibraryData\library-tools-release\start-production.ps1'
+.\start-production.ps1 -Port 8765
 ```
 
-The root launcher delegates to `scripts/start-production.ps1`. Defaults match
-the paths above. The launcher uses `DAHAN_LAN_ADDRESS`, otherwise an installation-level
-`server-config.json` LAN address when present, then loopback; an
-explicit `-LanAddress` takes precedence. An empty explicit value selects loopback.
+The root launcher delegates to `scripts/start-production.ps1`. Settings come
+from explicit parameters, environment variables, local
+`dahan-config.json` (or legacy installation-level `server-config.json`), then
+per-user defaults. The launcher uses the configured `DAHAN_LAN_ADDRESS`, otherwise
+loopback. An explicit `-LanAddress` takes precedence; an empty explicit value
+selects loopback. Additional DNS names are opt-in through comma-separated
+`DAHAN_HOST_ALIASES`; no personal hostname is trusted by default.
 
 All runtime, database, original, log, backup and Python paths are overridable.
 For another installation, pass them explicitly. Keep code/Python/derivatives and
-logs on reliable storage; the startup helper no longer points Python/TEMP at D:.
+logs on reliable storage; the startup helper uses the configured Python and
+standard Windows temporary storage.
 
 ```powershell
 .\start-production.ps1 -PythonPath 'E:\Dahan\venv\Scripts\python.exe' `
   -RuntimeDirectory 'E:\Dahan\runtime' -DatabaseDirectory 'F:\Dahan\databases' `
-  -SourceDirectory 'F:\Originals' -LogsDirectory 'E:\Dahan\logs' `
+  -LogsDirectory 'E:\Dahan\logs' `
   -BackupDirectory 'G:\Dahan-backups' -LanAddress '192.168.1.50'
 ```
 
 `-CheckOnly` validates/resolves settings without launching. Production always
 sets `DAHAN_REQUIRE_EXISTING_DATABASE=1`: absent/empty databases are not silently
 recreated. It can still start the web shell when database storage is unavailable.
-Create a fresh catalogue with the development setup before an initial production
-installation; restore both databases for an existing library.
+Run `scripts/install.ps1` for a fresh installation; restore both databases for
+an existing library. Setup refuses a partial database pair instead of replacing
+it. Ordinary startup never runs the installer or downloads dependencies.
 
 The supervisor writes stdout/stderr and native-fault traces to the configured
 log folder, restarts unexpected exits with 5–60 second backoff, and refuses an
@@ -98,7 +104,7 @@ not a Windows service or reboot task. Startup never automatically resumes scans.
 Useful read-only checks:
 
 ```powershell
-Get-Content 'C:\DahanPhotoLibraryData\logs\current-80.json'
+Get-Content (Join-Path $env:LOCALAPPDATA 'DahanPhotoLibrary\logs\current-80.json')
 Get-NetTCPConnection -LocalPort 80 -State Listen
 Invoke-RestMethod http://127.0.0.1/api/health
 ```
@@ -118,9 +124,8 @@ catalogue initialization is unavailable. Transient Windows progress-file locks
 are retried without misreporting a disconnected catalogue.
 
 A supervisor cannot repair hardware or guarantee writes to a failing drive.
-The October 2026 recovery observed external-drive I/O errors and exFAT repair
-warnings; those observations do not prove whether the cause is the SSD, cable,
-USB power or controller. No automatic filesystem repair/formatting is performed.
+Drive I/O errors and filesystem repair warnings do not establish whether the
+cause is the disk, cable, USB power or controller. No automatic filesystem repair/formatting is performed.
 
 ## Back up and restore
 
@@ -163,7 +168,15 @@ before starting any scan. Keep the previous installation until recovery is teste
 
 ## Offline maps
 
-With `DAHAN_DATA` set, install the overview map with:
+The installer downloads public offline references and builds the place index
+without opening the media catalogue. To install these separately, set
+`DAHAN_DATA` to the intended runtime directory and run:
+
+```powershell
+.\.venv\Scripts\python.exe -m backend.setup_references
+```
+
+To install only the overview map:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts/download-map.py

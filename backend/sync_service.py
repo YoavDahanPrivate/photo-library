@@ -17,7 +17,7 @@ class Settings(BaseModel):
     time: str = "03:00"
     weekday: int = Field(default=6, ge=0, le=6)
     month_day: int = Field(default=1, ge=1, le=31)
-    timezone: str = "Asia/Jerusalem"
+    timezone: str = "UTC"
     auto_assign: bool = True
 
     @field_validator("time")

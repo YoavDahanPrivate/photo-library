@@ -60,6 +60,32 @@ snapshot; the application remains ALPHA.
   endpoint schema and source hashes. This documentation/source checkpoint does
   not automatically start approval, scans or schedules.
 
+## Same-day installation follow-up
+
+The portability audit found remaining household drive defaults, preset phone
+Sources, trusted PC hostnames and regional schedule defaults. These have been
+removed from runtime defaults. A fresh installation starts with zero Databases,
+Sources and media; legacy upgrades use an explicit original root and infer Source
+names from existing records. This does not rewrite registered identities or
+annotations in an already migrated installation.
+
+`scripts/install.ps1` provisions dependencies/frontend, public face/map resources
+and an empty database pair. It saves paths in ignored `dahan-config.json`.
+Launchers read local configuration/environment/overrides instead of personal
+drive paths. Public reference-index installation does not open the media catalogue.
+Setup refuses incomplete existing storage, and production retains its missing
+database guard. README and Operations now document independent installation.
+
+Validation: **395 backend tests**, the production frontend build and both mocked
+browser checks passed. Six new isolated checks cover empty onboarding, original
+folder registration and real thumbnail indexing, persistent IDs/annotations after
+restart, legacy Source inference, incomplete-storage protection, actual Windows
+installer/launcher startup using only its saved local settings, and public map
+installation/failure handling. Dependency-download and separate-physical-PC
+acceptance remain release checks; the launcher fixture reuses installed
+dependencies and serves a minimal fixture page. The current household server
+was left running without deploying or restarting for this source follow-up.
+
 ## Reproduction
 
 Follow [README setup](../README.md), then run `scripts/check.ps1`. Add

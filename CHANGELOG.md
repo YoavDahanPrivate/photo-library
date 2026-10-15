@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-10-15 — Independent first-time installation
+
+Removed household drive paths, preset phone Sources, trusted PC hostnames and
+regional schedule defaults from runtime code. Fresh installs start empty;
+legacy Source names are inferred from records when an explicit upgrade root
+is provided. Added a Windows install script, local ignored configuration,
+public model/map setup, and fixture checks for onboarding, thumbnail indexing,
+restart persistence, legacy annotations and incomplete-storage protection.
+
 ## 2026-10-15 — Managed libraries and People automation
 
 Configurable Databases/Sources/Albums, smart editable previews, advanced subtree

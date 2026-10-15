@@ -8,6 +8,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $taskProject = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'common.ps1')
+Import-DahanConfiguration -ProjectRoot (Split-Path -Parent $PSScriptRoot)
 $taskPython = Resolve-DahanPython -PythonPath $PythonPath -ProjectRoot $taskProject
 Set-DahanPaths -DataDirectory $DataDirectory -DatabaseDirectory $DatabaseDirectory -SourceDirectory $SourceDirectory
 $env:DAHAN_REQUIRE_EXISTING_DATABASE = '1'

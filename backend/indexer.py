@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 import cv2, numpy as np, imageio_ffmpeg, pillow_heif
 from PIL import Image, ImageOps, ExifTags
-from .core import DATA, ROOT, PHONES, db, init, original
+from .core import DATA, db, init, original
 
 pillow_heif.register_heif_opener()
 IMAGES = {
@@ -71,7 +71,7 @@ def sample():
 
 
 def models():
-    MODELS.mkdir(exist_ok=True)
+    MODELS.mkdir(parents=True, exist_ok=True)
     manifest = []
     for name, remote in [
         ("yunet", "face_detection_yunet/face_detection_yunet_2023mar.onnx"),

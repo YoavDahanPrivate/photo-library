@@ -68,10 +68,23 @@ def migrate(c):
     c.execute("CREATE INDEX IF NOT EXISTS media_album_status ON media(album_id,status)")
     if c.execute("SELECT 1 FROM library_meta WHERE key='legacy_migrated'").fetchone():
         return
-    # The legacy layout remains intact until the owner explicitly previews a change.
+    # Never invent roots or household Sources on a new installation. Existing
+    # legacy catalogues need their original root explicitly configured, so an
+    # ambiguous common ancestor cannot accidentally become a new scan root.
+    if core.ROOT is None:
+        if c.execute("SELECT 1 FROM media LIMIT 1").fetchone():
+            raise OSError("Set DAHAN_SOURCE to this legacy catalogue's original root before migrating")
+        c.execute("INSERT INTO library_meta VALUES('legacy_migrated','1')")
+        return
+    # The legacy layout remains intact until the owner previews a change.
+    phones = set(core.PHONES)
+    for row in c.execute("SELECT DISTINCT phone FROM media WHERE phone IS NOT NULL"):
+        name = row[0]
+        if name and name not in (".", "..") and not any(ch in name for ch in ("/", "\\", ":")):
+            phones.add(name)
     did = identity()
-    c.execute("INSERT INTO library_databases(id,root,alias,layout) VALUES(?,?,?,'legacy')",
-              (did, str(core.ROOT.resolve()), core.ROOT.name or "Photos"))
+    c.execute("INSERT INTO library_databases(id,root,alias,layout) VALUES(?,?,?,?)",
+              (did, str(core.ROOT.resolve()), core.ROOT.name or "Photos", "legacy" if phones else "sources"))
     # Carry an installed library's calendar forward into its first Database.
     sync_path = core.database_dir() / "sync.sqlite"
     if sync_path.is_file():
@@ -81,7 +94,7 @@ def migrate(c):
                 if setting:
                     c.execute("UPDATE library_databases SET schedule=?,next_due=? WHERE id=?", (*setting, did))
     sources = {}
-    for phone in core.PHONES:
+    for phone in sorted(phones):
         sid = identity()
         c.execute("INSERT INTO library_sources(id,database_id,relative_path,alias) VALUES(?,?,?,?)", (sid, did, phone, phone))
         sources[phone] = sid
@@ -708,7 +721,7 @@ def source_root(row):
                 if p.is_relative_to(root) and (p.is_symlink() or p.is_junction()):
                     raise ValueError("Registered root must not traverse links")
             return base.resolve()
-    if row["phone"] in core.PHONES:
+    if core.ROOT is not None and row["phone"] in core.PHONES:
         base = core.ROOT / row["phone"]
         if any(p.is_symlink() or p.is_junction() for p in (core.ROOT, base)):
             raise ValueError("Legacy root must not traverse links")

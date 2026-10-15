@@ -32,5 +32,6 @@ runtime/
 logs/
 people-operations/
 server-config.json
+dahan-config.json
 production-service.json
 verification-report.json

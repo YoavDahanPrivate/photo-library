@@ -1,9 +1,17 @@
-import os, sqlite3
+import json, os, sqlite3
 from pathlib import Path
 
-DATA = Path(os.environ.get("DAHAN_DATA", "D:/DahanPhotoLibraryData/prototype"))
-ROOT = Path(os.environ.get("DAHAN_SOURCE", "D:/DahanPhotosSync"))
-PHONES = ("Yoav14ProMax", "Bar\u2019s iPhone", "iPhoneX Hila")
+# A clean install has no original folders or Sources until the owner adds them.
+# DAHAN_SOURCE is only an explicit opt-in for migrating an older installation.
+DEFAULT_STORAGE = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / ".local" / "share")) / "DahanPhotoLibrary"
+DATA = Path(os.environ.get("DAHAN_DATA") or DEFAULT_STORAGE / "runtime")
+ROOT = Path(os.environ["DAHAN_SOURCE"]) if os.environ.get("DAHAN_SOURCE") else None
+legacy_sources = json.loads(os.environ.get("DAHAN_LEGACY_SOURCES") or "[]")
+if not isinstance(legacy_sources, list):
+    raise ValueError("DAHAN_LEGACY_SOURCES must be a JSON list of immediate folder names")
+PHONES = tuple(legacy_sources)
+if any(not isinstance(name, str) or not name or name in (".", "..") or "/" in name or "\\" in name or ":" in name for name in PHONES):
+    raise ValueError("DAHAN_LEGACY_SOURCES must contain immediate folder names")
 
 
 def database_dir():
