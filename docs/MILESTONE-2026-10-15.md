@@ -1,7 +1,52 @@
-# Milestone: managed libraries and guided People automation
+# Milestone: managed libraries and person-first People review
 
 Date: **15 October 2026**. This consolidates work since the 8 October source
 snapshot; the application remains ALPHA.
+
+## People review additions in this checkpoint
+
+This source checkpoint includes the People work after the earlier activation
+correction below. Earlier sections retain their historical validation counts;
+the final validation section records this checkpoint's complete checks.
+
+- Full-window confidence review, paged cards, confidence switching, preserved
+  selections and sticky desktop actions, with a responsive phone layout.
+- Person-first review with a searchable, paged list ranked by confirmed faces,
+  per-person pending counts, scoped confidence/group previews and explicit
+  next/change-person navigation. Catalogue review remains available.
+- Read-only similar-face groups with complete member inspection, cross-page
+  deselection, exact selected approval and stale-preview checks. Grouping changes
+  neither recognition confidence nor assignments.
+- Selected Assign/Not-person controls in each confidence list, transactional
+  bulk rejection, negative-example learning and one Undo per committed batch.
+  Selections in the other list survive the operation. A rejection demotes the
+  affected people's high flags until matching incorporates the feedback.
+- Person renames preserve unrelated suggestions. Background matching retries
+  changed snapshots twice while retaining stale-publication checks; actionable
+  empty/error states expose reevaluation in both modes.
+- Photo-disjoint calibration uses the full eligible fitting gallery, bounded
+  tuning/validation queries, active-rule comparisons, retained validated rules
+  and inspectable conflicts. Reports remain inactive until explicitly enabled.
+- Known/Unknown portrait toggles, Name/Face count sorting, per-sort direction
+  defaults and browser-persistent preferences. Filtered lazy loading reaches all
+  results; invalid stored preferences fall back to usable defaults.
+- `scripts/check.ps1 -BrowserChecks` now runs seven mocked browser workflows,
+  including grouped, person-first, selected-action and portrait-directory tests.
+
+## Recognition follow-up identified during review
+
+Automatic approvals currently become trusted matching references alongside
+explicit user confirmations. Scoring uses the closest reference, so a large
+automatically extended gallery can reinforce earlier errors. A read-only audit
+found a person's weak proposals depended predominantly on automatically
+approved references; this identified a failure mode, not verified ground truth
+for individual identities. The person-switching UI displayed the correct queue.
+
+Separating human-verified references from automatic approvals, requiring
+independent corroboration and reviewing reference provenance remain unimplemented.
+This milestone does not retroactively relabel existing faces or change reference
+trust. Calibration against saved labels cannot certify real-world identity
+accuracy. See [Face matching](FACE_MATCHING.md#automatic-reference-feedback-known-limitation).
 
 ## Shipped behavior
 
@@ -37,7 +82,7 @@ snapshot; the application remains ALPHA.
 - Stop scan now interrupts long matching passes between scoring blocks, with
   stage units and safe-checkpoint feedback.
 
-## Validation
+## Earlier validation: initial checkpoint
 
 - **389 backend tests passed** on isolated temporary catalogues/disposable files.
 - TypeScript and Vite production build passed using `--configLoader runner`.
@@ -100,7 +145,8 @@ write screenshots only into temporary/explicit QA output folders.
 - Recognition uses existing SFace embeddings and trusted references; it does not
   fine-tune neural-network weights. Similarity confidence is not a calibrated
   accuracy percentage. The approval loop explicitly treats its confirmations
-  as trusted, following the user's chosen manual-equivalent workflow.
+  as trusted, following the user's chosen manual-equivalent workflow. This can
+  amplify mistaken labels; human/automatic reference separation remains pending.
 - New photos, changing references and network/drive speed make an overall ETA
   unreliable. Progress percentages refer to the current phase.
 - Physical iPhone native-share/system-preview testing and clean-machine install
@@ -155,3 +201,26 @@ refresh. The correction passed 30 focused backend tests and all three browser
 workflows. A live browser check used API-write blocking to verify displayed
 mode/counts and mobile layout. The service restart was for a read endpoint and
 static UI only, with rollback copies and no schema migration.
+
+
+## Final checkpoint validation
+
+The complete source check passed on 15 October 2026:
+
+- **440 backend tests** against isolated temporary catalogues and disposable
+  originals, including migrations, preservation, recovery and worker behavior.
+- TypeScript checking and the Vite production build.
+- **Seven mocked Edge browser workflows**: operation progress, automatic-review
+  rounds, matching-quality controls, grouped review, person-first review,
+  selected assignment/rejection, and People portrait filtering/sorting.
+- Staged whitespace checks and a source inventory check. No databases, originals,
+  embeddings, models, generated assets, credentials, local configuration or
+  household-path additions are part of this Git checkpoint.
+
+The two existing Starlette/httpx deprecation warnings and Vite's large-chunk
+advisory remain non-failing diagnostics. Fixture success does not certify face
+identity accuracy, physical-drive reliability or native iPhone system dialogs.
+Earlier live read-only checks verified desktop/mobile review behavior, portrait
+sort/filter persistence, endpoint availability and service health with API writes
+blocked. This Git checkpoint does not restart the deployed server, run scans,
+approve faces or apply calibration reports.

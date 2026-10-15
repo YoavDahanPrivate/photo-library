@@ -8,12 +8,14 @@ const server=http.createServer((req,res)=>{const name=new URL(req.url,'http://lo
  try{
   const page=await browser.newPage({viewport:{width:1440,height:1100}}),errors=[];page.on('pageerror',error=>errors.push(error.stack));
   let matches=Array.from({length:96},(_,index)=>({face_id:'match-'+index,person_id:index<60?1:2,name:index<60?'Maya':'Daniel',score:.65,margin:.10,support:2,score_cutoff:.7,margin_cutoff:.12,source_person_id:null,confidence:'lower',media_id:'photo-'+index,taken:'2020-01-'+String(1+Math.floor(index/15)).padStart(2,'0')}));
-  let approved=[],job=null,starts=0,report=null,enabled=null,analyzes=0;
+  let approved=[],job=null,starts=0,report=null,enabled=null,analyzes=0,rejections=0;
   await page.route('**/api/**',async route=>{
    const request=route.request(),url=new URL(request.url()),name=url.pathname;let value=[];
    if(name==='/api/people/suggestions')value=matches;
    else if(name==='/api/people/approve-suggestions'){
     const body=request.postDataJSON();approved.push(body.matches);const ids=new Set(body.matches.map(row=>row.face_id));matches=matches.filter(row=>!ids.has(row.face_id));value={approved:ids.size,ok:true};
+   }else if(name==='/api/people/reject-suggestion'){
+    const body=request.postDataJSON();assert.equal(body.face_id,'reject-this');assert.equal(body.person_id,1);rejections++;matches=matches.filter(row=>row.face_id!==body.face_id).map(row=>row.person_id===1?{...row,confidence:'lower'}:row);value={ok:true,learning_pending:true,confidence_invalidated_for:1};
    }else if(name==='/api/people/calibration')value={report,active_id:enabled};
    else if(name==='/api/people/calibration/apply'){
     assert.equal(request.postDataJSON().confirm,true);assert.equal(request.postDataJSON().profile_id,'fixture-profile');enabled='fixture-profile';value={ok:true};
@@ -45,8 +47,8 @@ const server=http.createServer((req,res)=>{const name=new URL(req.url,'http://lo
   const dates=await cards.locator('small:not(.match-evidence)').allTextContents();assert.equal(new Set(dates.slice(0,4)).size,4);
   await lower.getByRole('button',{name:'Select this page (48)',exact:true}).click();
   const first=cards.first().getByRole('checkbox');await first.uncheck();
-  await page.getByRole('button',{name:'Approve selected 47',exact:true}).click();
-  await page.getByRole('button',{name:'Approve selected 0',exact:true}).waitFor();
+  await lower.getByRole('button',{name:/^Assign 47 selected matches/}).click();
+  await lower.getByRole('button',{name:/^Assign 0 selected matches/}).waitFor();
   assert.equal(approved.length,1);assert.equal(approved[0].length,47);assert(approved[0].every(row=>row.person_id===1));
   assert.equal(starts,0,'Refresh was explicitly disabled');
   await page.locator('.matching-quality>summary').click();
@@ -63,16 +65,27 @@ const server=http.createServer((req,res)=>{const name=new URL(req.url,'http://lo
   await page.waitForFunction(()=>{const checkbox=document.querySelector('.review-card-selection input');return checkbox&&!checkbox.disabled;},{},{timeout:15000});
   await page.getByRole('checkbox',{name:'Refresh matches after reviewing'}).check();
   await lower.locator('.suggestion-grid>div').first().getByRole('checkbox').check();
-  await page.getByRole('button',{name:'Approve selected 1',exact:true}).click();
+  await lower.getByRole('button',{name:/^Assign 1 selected matches/}).click();
   await page.waitForFunction(()=>document.querySelector('.people-operation')?.textContent.includes('Comparing updated faces'),{},{timeout:15000});
   assert.equal(starts,2);assert.equal(approved.length,2,'Background refresh must not approve anything');
   // A job started elsewhere can complete between polls. Its queue still needs refreshing.
   matches.push({face_id:'external',person_id:1,name:'Maya',score:.65,margin:.1,support:2,confidence:'lower',source_person_id:null});
   job={...job,id:'d'.repeat(32),state:'completed',phase:'Matches ready for review',updated_at:Date.now()/1000,result:{suggestions:matches.length}};
   await lower.getByRole('heading',{name:'Lower-confidence matches (13)',exact:true}).waitFor({timeout:15000});
+  await page.getByRole('checkbox',{name:'Refresh matches after reviewing'}).uncheck();
+  matches=[{face_id:'reject-this',person_id:1,name:'Maya',score:.8,margin:.2,support:2,confidence:'high',source_person_id:null},{face_id:'similar-maya',person_id:1,name:'Maya',score:.79,margin:.2,support:2,confidence:'high',source_person_id:null},{face_id:'other-daniel',person_id:2,name:'Daniel',score:.9,margin:.3,support:2,confidence:'high',source_person_id:null}];
+  job={...job,id:'e'.repeat(32),result:{suggestions:matches.length}};
+  await page.getByRole('combobox',{name:'Filter suggested person'}).selectOption('');
+  const high=page.getByRole('region',{name:'High-confidence matches'});
+  await high.getByRole('heading',{name:'High-confidence matches (3)',exact:true}).waitFor({timeout:15000});
+  await high.locator('.suggestion-grid>div').filter({has:page.getByRole('checkbox',{name:'Select match reject-this',exact:true})}).getByRole('button',{name:'Not Maya',exact:true}).click();
+  await page.getByText('Rejection saved. Reevaluate to apply it to similar faces.',{exact:false}).waitFor();
+  await high.getByRole('heading',{name:'High-confidence matches (1)',exact:true}).waitFor();
+  await lower.getByRole('heading',{name:'Lower-confidence matches (1)',exact:true}).waitFor();
+  assert.equal(rejections,1);assert.equal(starts,2,'Refresh was disabled; the rejected face is not automatically assigned');
   await page.setViewportSize({width:390,height:844});
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Mobile layout overflow');
   assert.deepEqual(errors,[]);
-  console.log('Matching quality: person filter, date variety, exact selected batch, report preview/enable, visible active rules, automatic reevaluation on enable, background/external-job refresh and mobile layout passed');
+  console.log('Matching quality: person filter, date variety, exact selected batch, report preview/enable, visible active rules, automatic reevaluation on enable, background/external-job refresh, rejection demotion/explanation and mobile layout passed');
  }finally{await browser.close();await new Promise(resolve=>server.close(resolve));}
 })().catch(error=>{console.error(error);process.exitCode=1;});

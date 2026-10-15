@@ -224,3 +224,111 @@ selection as one reversible batch. Cards explain missing confidence evidence.
 Optional refresh after reviewing starts in the background after eight idle
 seconds. Unchanged comparisons are reused, and new corrections/rejections are
 always respected. Original photographs are not rescanned by reevaluation.
+
+Use **Expand review** on either confidence panel for a full-window review
+workspace. Switch between High-confidence and Lower-confidence at the top;
+filters, selected matches and each panel's current page are preserved. Open
+**Review options** for filters, ordering and background refresh settings. **Back to
+People** or Escape returns to the split view. Both views let matches scroll with
+the page, rather than inside a fixed-height box. In expanded desktop review,
+approval actions and page navigation remain accessible while scrolling.
+
+**Not <Person Name>** now teaches the matcher rejected lookalikes as well as
+blocking that exact face/person pair. Reevaluate (or leave background refresh
+enabled) to apply the feedback to similar faces. Confident negative matches are
+withheld; borderline ones stay in Lower-confidence with an explanation.
+Existing assignments remain saved. Undo or an explicit correction can reverse
+the feedback. Closely conflicting confirmed/rejected examples stay face-specific
+instead of blocking a whole person's appearance. See [Face matching](FACE_MATCHING.md).
+
+
+## Review similar faces together
+
+In People, choose **Try grouped review**. The suggested-person filter also
+filters groups. **Tighter similarity** offers more cohesive sets; **Broader
+similarity** can combine more faces and needs closer inspection. Grouping does
+not change confidence or assign faces. The summary reports grouped faces and
+those still needing individual review; every face stays available in the
+ordinary confidence panels.
+
+Choose **Review all N faces** to open the set. All members are initially
+selected, including members on other pages. Inspect the pages, deselect any
+exceptions, then choose **Approve selected N**. This sends the exact selection
+as one batch, with the existing Undo behavior. A changed library invalidates an
+open preview; reopen a fresh group before retrying. Each set contains at most
+64 faces. Groups are formed within bounded 512-face blocks; this is a review
+aid, not exhaustive identity clustering or automatic approval.
+
+**Analyze matching quality** now uses all eligible reference photos, with up to
+80 independent photos each for tuning and validation. The report compares the
+trial against enabled rules, shows conflicting examples, and can retain
+existing validated adjustments. Analysis creates a draft and does not enable
+it or assign faces. Review the report before choosing **Enable reviewed matching
+rules**. An open-set conflict means the saved identity was deliberately omitted
+from the gallery for that test; it is not proof the saved label is wrong.
+
+
+## Review suggestions one person at a time
+
+In **People → Review by person**, choose from a searchable, paged list ranked by
+confirmed face count across all visible databases and Sources. Pending suggestions
+are counted separately; the default filter shows people who have suggestions.
+Turn off **Only people with suggestions** to include everyone with a name.
+
+Choosing a person shows their current high- and lower-confidence suggestions,
+with the same selection, approval, rejection, paging and expanded review controls.
+**View photo / video** opens the media for context. **Try grouped review** is also
+scoped to this person. Approve all applies only to the selected confidence list
+for this person. The global automatic approval loop remains in Catalogue review.
+
+**Next person** chooses the most frequently confirmed other person with pending
+suggestions. **Choose another person** returns to the ranked list. Completing a
+person's queue does not advance automatically, and new suggestions may appear
+after reevaluation. These are the matcher's current proposals, not a search for
+every possible appearance. Switching to **Catalogue review** restores the full
+suggestion queue and clears the person filter and selected checkboxes. Changing
+people also clears selections so one person's batch cannot include another's.
+
+
+If the suggestion lists are empty, **Reevaluate unassigned faces** is available
+in both review modes. A failed/interrupted matching job also offers **Reevaluate
+matches**; this regenerates proposals without automatically assigning faces.
+Background matching retries up to twice if saved corrections or matching rules
+change during its calculation. Persistent changes stop the job visibly and
+leave the last committed suggestions intact. Renaming an existing named person
+preserves unrelated suggestions; naming a previously unnamed group removes that
+group's own proposals and demotes existing high-confidence flags until reevaluation.
+
+
+In each confidence list, use the checkboxes or **Select this page**, then choose
+**Assign to <name>** or **Not <name>** beside **Approve all**. These selected-only
+buttons are disabled until that list has a selection. Selections span pages;
+each action affects only selected faces in its confidence list. When multiple
+people are proposed, the labels become **Assign selected** and **Not suggested
+people**: each face uses the person proposed on its own card. Selections in the
+other confidence list are retained, although rejection feedback may move its
+affected high-confidence proposals into lower-confidence.
+
+A selected rejection is one atomic, undoable batch. Faces remain unassigned;
+the rejected proposals are removed and their feedback is used on reevaluation.
+Other high flags for affected people are demoted until refreshed. Undo restores
+the selected proposals and their prior rejection records; other demoted flags
+remain conservative until reevaluation. Individual card actions remain available.
+
+
+## Filter and sort the People portraits
+
+Above the round portraits, **Browse people** has **Known people** and **Unknown
+people** toggles. Enable both to show everyone, or disable one to focus on the
+other. Known means named identities; Unknown includes unnamed groups, Unassigned
+faces and the Unknown People bucket. At least one category stays enabled. These
+controls affect the portrait directory; suggestion review has its own controls.
+
+**Sort by → Name** starts with **A–Z**. **Face count** starts with **Largest
+first**, using the face count printed under each portrait, rather than the number
+of unique photos or pending suggestions. Both directions are available. Each sort
+remembers its direction, and the selected categories, sort and directions persist
+in this browser for the next visit. Portraits continue loading as you scroll;
+filtering or changing sort resets the loaded window without limiting the results.
+Hiding a category clears unnamed-group selection so hidden groups cannot be moved
+accidentally. These display changes do not alter face assignments or matching.

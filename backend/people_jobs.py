@@ -187,7 +187,7 @@ def cancel(identity: str):
 def work(identity):
     import logging
     import sqlite3
-    from .people_review import reevaluate
+    from .people_review import reevaluate_current as reevaluate
     path = job_path(identity)
     state = read_json(path)
     state.update(pid=os.getpid(), state='running')

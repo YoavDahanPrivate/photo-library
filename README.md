@@ -4,7 +4,7 @@
 
 A self-hosted photo/video library for a household, with local face recognition,
 offline maps, and desktop/mobile browsing. The current milestone adds configurable
-Databases → Sources → Albums and guided, repeatable face-review automation.
+Databases → Sources → Albums, person-first face review and persistent People browsing.
 
 The application currently targets a Windows host on a trusted home network.
 Accounts, authentication and HTTPS provisioning are not implemented; keep the
@@ -24,12 +24,18 @@ unauthenticated server off the public internet.
 - **Advanced relayout:** subtree Source overrides, child Databases and logical Linked Sources across Databases. Confirm catalogue migrations while preserving media identities and annotations.
 - **Network originals:** localhost-only credential entry, Windows Credential Manager persistence, existing-session recovery and unavailable-drive handling.
 - **Resumable scans:** durable directory snapshots, file/work checkpoints, Pause/Stop/Resume, live folder/file progress and incremental publication into Library.
-- **People:** local detection, naming, correction, split/merge, undo, bounded review pages and transactional bulk approval. A user-started high-confidence loop approves → reevaluates → repeats, with progress and Stop.
+- **People:** local detection, naming, correction, split/merge, undo, catalogue/person-first review, full-window confidence lists, similar-face group previews and transactional selected assignment/rejection. Known/Unknown portrait filters and Name/Face count sorting remember browser preferences. A user-started high-confidence loop approves → reevaluates → repeats, with progress and Stop. Rejected lookalikes inform subsequent matching.
 - **Dates and locations:** preserve embedded data; edit missing/estimated dates or named places/coordinates through previewed catalogue changes. Map includes Unlocated and No GPS collections.
 - **Browsing:** unified search, offline maps, timeline/date sorting, Album/Sub Album paths, large previews, prefetched neighbors and touch navigation.
 - **Mobile:** immediate loading shell and iOS launch images; in-app HTTP save helpers and separate Safari downloads; native file sharing when trusted HTTPS is available.
 - **Duplicates:** reviewed exact/format-copy cleanup, recoverable trash, restore and display-only HEIC/JPEG copy hiding.
 - **Runtime:** separate application/derivative and SQLite storage, JSON storage errors, health reporting and a supervised production launcher.
+
+Automatic approval currently promotes inferred matches into reference examples for
+later rounds. Earlier mistakes can therefore reinforce subsequent suggestions;
+separating human-verified and automatically approved references remains follow-up
+work. Calibration results are measured against saved labels, not independent
+identity verification. See [matching limitations](docs/FACE_MATCHING.md#automatic-reference-feedback-known-limitation).
 
 ## Install on your own Windows PC
 

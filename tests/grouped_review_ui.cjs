@@ -1,0 +1,65 @@
+const {chromium}=require(process.argv[2]||'playwright');
+const fs=require('fs'),path=require('path'),http=require('http'),assert=require('assert/strict');
+const root=path.resolve(__dirname,'../frontend/dist'),output=process.env.DAHAN_QA_OUTPUT||require('os').tmpdir();fs.mkdirSync(output,{recursive:true});
+const server=http.createServer((req,res)=>{const name=new URL(req.url,'http://localhost').pathname,file=path.resolve(root,'.'+(name==='/'?'/index.html':name));if(!file.startsWith(root+path.sep)){res.writeHead(403).end();return;}try{res.setHeader('Content-Type',file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html');res.end(fs.readFileSync(file));}catch{res.writeHead(404).end();}});
+(async()=>{await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const browser=await chromium.launch({channel:'msedge',headless:true});try{
+ const page=await browser.newPage({viewport:{width:1440,height:900}}),errors=[];page.on('pageerror',error=>errors.push(error.stack));
+ let matches=Array.from({length:35},(_,index)=>({face_id:'set-'+index,person_id:1,name:'Maya',score:.65,margin:.1,support:2,confidence:'lower',source_person_id:3,taken:'2020-01-01',media_id:'photo-'+index}));
+ let writes=[],job=null,breadths=[];
+ await page.route('**/api/**',async route=>{
+  const req=route.request(),url=new URL(req.url()),name=url.pathname;let value=[];
+  if(name==='/api/people/suggestions')value=matches;
+  else if(name==='/api/people/review-groups'){
+   breadths.push(url.searchParams.get('cohesion'));value={groups:matches.length>1?[{id:'fixture-'+matches.length,person_id:1,name:'Maya',count:matches.length,matches:[...matches],representatives:matches.slice(0,4).map(row=>row.face_id),first_date:'2020-01-01',last_date:'2020-01-01',minimum_similarity:.9}]:[],grouped_faces:matches.length,total_faces:matches.length,individual_faces:0,total_groups:matches.length>1?1:0,analyzed_faces:matches.length,offset:0,limit:4};
+  }else if(name==='/api/people/approve-suggestions'){
+   const selected=req.postDataJSON().matches;writes.push(selected);assert.equal(selected.length,33);assert(!selected.some(row=>['set-0','set-16'].includes(row.face_id)));assert(selected.every(row=>row.person_id===1&&row.source_person_id===3));const ids=new Set(selected.map(row=>row.face_id));matches=matches.filter(row=>!ids.has(row.face_id));value={ok:true,approved:selected.length};
+  }else if(name==='/api/people/calibration')value={report:null,active_id:null,effective_mode:'conservative'};
+  else if(name==='/api/people/operations/current')value=job;
+  else if(name==='/api/people')value=[{id:1,name:'Maya',count:10,cover:'a'}];
+  else if(name==='/api/status')value={revision:0,total:1,counts:{ready:1},faces:35,features:{}};
+  else if(name==='/api/sync/status')value={running:false,runs:[]};
+  else if(name==='/api/library/hierarchy')value={databases:[],sources:[],linked_sources:[]};
+  else if(name==='/api/sources')value=[{phone:'Fixture',album:'Album',count:1}];
+  else if(name==='/api/media')value={items:[],total:0};
+  else if(name==='/api/place-options')value={options:[]};
+  else if(name.includes('thumbnail')){await route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120"><rect width="120" height="120" fill="#e8eee0"/><ellipse cx="60" cy="48" rx="25" ry="30" fill="#afc5a6"/><path d="M15 120 Q15 78 60 78 Q105 78 105 120" fill="#7c9b73"/><circle cx="51" cy="47" r="3" fill="#294f3a"/><circle cx="70" cy="47" r="3" fill="#294f3a"/><path d="M48 63 Q60 73 73 62" stroke="#294f3a" fill="none"/></svg>'});return;}
+  await route.fulfill({json:value});
+ });
+ await page.goto('http://127.0.0.1:'+server.address().port+'/');
+ await page.locator('.sidebar nav').getByRole('button',{name:/^People/}).click();
+ await page.getByRole('checkbox',{name:'Refresh matches after reviewing'}).uncheck();
+ await page.getByRole('button',{name:'Try grouped review',exact:true}).click();
+ await page.getByText('35 faces in 1 review groups',{exact:true}).waitFor();
+ await page.getByRole('combobox',{name:'Grouping breadth'}).selectOption('broader');
+ await page.getByRole('button',{name:'Review all 35 faces',exact:true}).waitFor();
+ await page.getByRole('button',{name:'Review all 35 faces',exact:true}).click();
+ const dialog=page.getByRole('dialog',{name:'Assign this set to Maya?'});await dialog.waitFor();
+ assert.equal(writes.length,0,'Opening a preview must not assign faces');
+ assert.equal(await dialog.locator('.review-group-face-grid input').count(),16);
+ await dialog.getByRole('checkbox',{name:'Include face set-0',exact:true}).uncheck();
+ await dialog.getByRole('button',{name:'Next faces page',exact:true}).click();
+ await dialog.getByRole('checkbox',{name:'Include face set-16',exact:true}).uncheck();
+ await dialog.getByRole('button',{name:'Next faces page',exact:true}).click();
+ assert.equal(await dialog.locator('.review-group-face-grid input').count(),3);
+ await dialog.getByText('33 of 35 selected across all pages',{exact:true}).waitFor();
+ await page.waitForFunction(()=>[...document.querySelectorAll('.review-group-dialog img')].every(image=>image.complete&&image.naturalWidth>0));
+ await page.screenshot({path:path.join(output,'grouped-review-desktop.png')});
+ await dialog.getByRole('button',{name:'Approve selected 33',exact:true}).click();
+ await dialog.waitFor({state:'hidden'});
+ assert.equal(writes.length,1);assert.equal(matches.length,2);assert(breadths.includes('broader'));
+ await page.getByRole('button',{name:'Review all 2 faces',exact:true}).click();
+ job={id:'b'.repeat(32),state:'completed',kind:'reevaluate',phase:'Matches ready for review',updated_at:Date.now()/1000,started_at:Date.now()/1000,result:{suggestions:2}};
+ await dialog.getByText('The library changed while this group was open.',{exact:false}).waitFor({timeout:15000});
+ assert(await dialog.getByRole('button',{name:'Approve selected 2',exact:true}).isDisabled());
+ await dialog.getByRole('button',{name:'Back to groups',exact:true}).click();
+ await page.getByRole('button',{name:'Review all 2 faces',exact:true}).click();
+ await page.waitForFunction(()=>!document.querySelector('.review-group-dialog footer .primary')?.disabled);
+ assert(!(await dialog.getByRole('button',{name:'Approve selected 2',exact:true}).isDisabled()));
+ await page.setViewportSize({width:390,height:844});
+ assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+ assert(await dialog.evaluate(element=>element.scrollWidth<=element.clientWidth+1));
+ await page.screenshot({path:path.join(output,'grouped-review-mobile.png')});
+ await page.keyboard.press('Escape');await dialog.waitFor({state:'hidden'});
+ assert.deepEqual(errors,[]);assert.equal(writes.length,1);
+ console.log('Grouped review: read-only preview, breadth selection, all member pages, cross-page deselection, exact 33-face batch, stale preview guard, fresh retry, mobile and Escape passed');
+}finally{await browser.close();await new Promise(resolve=>server.close(resolve));}})().catch(error=>{console.error(error);server.close();process.exitCode=1;});

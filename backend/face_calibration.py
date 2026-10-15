@@ -12,6 +12,7 @@ DEFAULT = dict(score=.70, margin=.12, support=2)
 
 
 def migrate(c):
+    had_rejection_evidence = c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='face_rejection_evidence'").fetchone() is not None
     c.executescript('''
         CREATE TABLE IF NOT EXISTS face_match_profiles(
           id TEXT PRIMARY KEY,report TEXT NOT NULL,revision TEXT NOT NULL,active INTEGER NOT NULL DEFAULT 0,
@@ -19,7 +20,14 @@ def migrate(c):
         CREATE TABLE IF NOT EXISTS face_match_evidence(
           face_id TEXT PRIMARY KEY REFERENCES faces(id) ON DELETE CASCADE,
           support INTEGER NOT NULL,score_cutoff REAL NOT NULL,margin_cutoff REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS face_rejection_evidence(
+          face_id TEXT PRIMARY KEY REFERENCES faces(id) ON DELETE CASCADE,
+          rejection_score REAL NOT NULL,rejection_floor REAL,rejection_examples INTEGER NOT NULL);
     ''')
+    if not had_rejection_evidence:
+        # Old flags did not account for rejected lookalikes. A normal reevaluation
+        # rebuilds them; existing suggestions/annotations remain intact.
+        c.executescript('DELETE FROM high_confidence_faces;')
 
 
 def revision(c):
@@ -40,7 +48,7 @@ def thresholds(c, rows):
     # invalidate the profile instead of preserving rules learned from wrong labels.
     if any(identity not in actual or token(actual[identity]) != expected for identity,expected in report['anchors'].items()):
         return {}, 'Saved labels changed; conservative matching is being used. Analyze again.'
-    return {item['person_id']:item['proposed'] for item in report['people'] if item['eligible']}, None
+    return {item['person_id']:item['proposed'] for item in report['people'] if item['eligible'] or item.get('retained')}, None
 
 
 def profile_mode(c):
@@ -54,7 +62,7 @@ def profile_mode(c):
         (json.dumps(list(anchors)),)).fetchall()
     valid=len(rows)==len(anchors) and all(token(row)==anchors[row['id']] for row in rows)
     return dict(active_id=active['id'],effective_mode='calibrated' if valid else 'conservative',
-                active_people=sum(person['eligible'] for person in report['people']) if valid else 0,
+                active_people=sum(person['eligible'] or person.get('retained',False) for person in report['people']) if valid else 0,
                 mode_reason='Validated per-person adjustments are enabled.' if valid else 'Saved labels changed. Conservative rules are in use; analyze again.')
 
 
@@ -67,7 +75,8 @@ def status():
             return dict(report=None,report_stale=False,**mode)
         report=json.loads(row['report'])
         report.pop('anchors',None)
-        return dict(report=dict(id=row['id'],created=row['created'],**report),report_stale=row['revision']!=revision(c),**mode)
+        baseline_changed='baseline_profile_ids' in report and row['id']!=mode['active_id'] and report['baseline_profile_ids']!=[item[0] for item in c.execute('SELECT id FROM face_match_profiles WHERE active=1 ORDER BY id')]
+        return dict(report=dict(id=row['id'],created=row['created'],**report),report_stale=row['revision']!=revision(c) or baseline_changed,**mode)
 
 
 class Apply(BaseModel):
@@ -85,6 +94,8 @@ def apply(body: Apply):
         if not row or row['revision'] != revision(c):
             raise HTTPException(409,'Saved face reviews changed. Analyze again before enabling these rules.')
         report = json.loads(row['report'])
+        if 'baseline_profile_ids' in report and report['baseline_profile_ids']!=[item[0] for item in c.execute('SELECT id FROM face_match_profiles WHERE active=1 ORDER BY id')]:
+            raise HTTPException(409,'Enabled rules changed. Analyze again before enabling this report.')
         if not any(person['eligible'] for person in report['people']):
             raise HTTPException(409,'No person has enough independent evidence for a validated adjustment')
         c.execute('UPDATE face_match_profiles SET active=0')
@@ -111,8 +122,8 @@ def metrics(samples, person, rule):
                 negative_examples=sum(item['actual']!=person for item in samples))
 
 
-def propose(tuning, validation, person):
-    baseline = metrics(validation,person,DEFAULT)
+def propose(tuning, validation, person, baseline_rule=None):
+    baseline = metrics(validation,person,baseline_rule or DEFAULT)
     # Threshold selection sees tuning labels only. Validation is used once to
     # accept/reject that proposal, never to search for another passing setting.
     choices = []
@@ -128,85 +139,28 @@ def propose(tuning, validation, person):
     tested = metrics(validation,person,rule)
     enough = tested['positive_examples']>=15 and tested['negative_examples']>=50 and tested['correct']>=10
     eligible = enough and tested['mistakes']==0 and tested['correct']>baseline['correct']
-    return dict(proposed=rule if eligible else DEFAULT,eligible=eligible,baseline=baseline,validation=tested,
+    return dict(proposed=rule if eligible else DEFAULT,tested_rule=rule,eligible=eligible,baseline=baseline,validation=tested,
                 reason='More held-back matches with no observed mistakes' if eligible else 'Conservative rules retained; independent evidence did not justify a change')
 
 
 def analyze(progress=lambda *args:None):
-    from .people_review import vector
     progress('Reading calibration examples')
     with core.db() as c:
         saved_revision = revision(c)
+        baseline_ids=[row[0] for row in c.execute('SELECT id FROM face_match_profiles WHERE active=1 ORDER BY id')]
         rows = [dict(row) for row in c.execute('''SELECT f.id,f.media_id,f.person_id,f.status,f.embedding,p.name,m.sha
             FROM faces f JOIN people p ON p.id=f.person_id JOIN media m ON m.id=f.media_id
             WHERE trim(coalesce(p.name,''))!='' AND m.status='ready'
             AND f.status NOT IN ('dismissed','reevaluated','scan-suggested','auto-sync') ORDER BY f.id''')]
-    buckets = {}
-    for row in rows:
-        value = vector(row['embedding'])
-        if value is None:
-            continue
-        key = row['sha'] or row['media_id']
-        # All frames/copies of a known photograph stay in the same partition.
-        fold = int(hashlib.sha256(str(key).encode()).hexdigest()[:8],16)%4
-        buckets.setdefault(row['person_id'],dict(name=row['name'],fit={},tune={},test={}))['fit' if fold<2 else 'tune' if fold==2 else 'test'].setdefault(str(key),(row,value))
-    gallery = []
-    queries = []
-    anchors = {}
-    for person, bucket in buckets.items():
-        # Equal per-person caps prevent a person with thousands of photos from
-        # dominating the bounded study. Stable hash order avoids date bias.
-        for partition,limit in (('fit',96),('tune',40),('test',40)):
-            selected = sorted(bucket[partition].items(),key=lambda item:hashlib.sha256(item[0].encode()).hexdigest())[:limit]
-            for _, (row,value) in selected:
-                anchors[row['id']] = token(row)
-            if partition=='fit' and selected:
-                gallery.append((person,np.stack([item[1][1] for item in selected])))
-            elif partition!='fit':
-                queries.extend((partition,row,value) for _,(row,value) in selected)
-    tuning,validation = [],[]
-    progress('Testing held-back photographs',0,len(queries),'faces')
-    for offset in range(0,len(queries),64):
-        batch = queries[offset:offset+64]
-        matrix = np.stack([value for _,_,value in batch])
-        rankings = [[] for _ in batch]
-        for person,refs in gallery:
-            scores = matrix @ refs.T
-            for index in range(len(batch)):
-                rankings[index].append((float(scores[index].max()),person,int((scores[index]>=.55).sum())))
-        for (partition,row,_),ranking in zip(batch,rankings):
-            if not ranking:
-                continue
-            ranking.sort(reverse=True)
-            score,predicted,support = ranking[0]
-            item = dict(actual=row['person_id'],predicted=predicted,score=score,
-                        margin=score-(ranking[1][0] if len(ranking)>1 else 0),support=support)
-            (tuning if partition=='tune' else validation).append(item)
-            # Open-set check: simulate this person being absent from the gallery,
-            # then test whether another identity would wrongly accept the face.
-            others = [entry for entry in ranking if entry[1]!=row['person_id']]
-            if others:
-                wrong_score,wrong_person,wrong_support = others[0]
-                (tuning if partition=='tune' else validation).append(dict(
-                    actual=None,predicted=wrong_person,score=wrong_score,
-                    margin=wrong_score-(others[1][0] if len(others)>1 else 0),support=wrong_support))
-        progress('Testing held-back photographs',min(offset+64,len(queries)),len(queries),'faces')
-    people = []
-    for index,(person,bucket) in enumerate(buckets.items()):
-        progress('Evaluating matching rules',index,len(buckets),'people')
-        people.append(dict(person_id=person,name=bucket['name'],reference_photos=min(96,len(bucket['fit'])),
-                           tuning_photos=min(40,len(bucket['tune'])),validation_photos=min(40,len(bucket['test'])),
-                           **propose(tuning,validation,person)))
-    report = dict(model='OpenCV SFace',people=people,anchors=anchors,
-                  eligible_people=sum(person['eligible'] for person in people),
-                  additional_validation_matches=sum(person['validation']['correct']-person['baseline']['correct'] for person in people if person['eligible']),
-                  tuning_faces=len(tuning),validation_faces=len(validation),
-                  note='This study compares against saved labels, which can contain mistakes or past automatic confirmations. Zero observed mistakes is not a guaranteed accuracy percentage. Nearby burst photos can still be related; known copies and video frames are kept together. New rules require explicit confirmation.')
+        policy,_=thresholds(c,rows)
+    from .face_study import study
+    report=study(rows,progress,baseline_rules=policy)
+    report['baseline_profile_ids']=baseline_ids
     progress('Saving calibration report')
     identity = uuid.uuid4().hex
     with core.db() as c:
         c.execute('BEGIN IMMEDIATE')
-        if revision(c)!=saved_revision:
+        if revision(c)!=saved_revision or [row[0] for row in c.execute('SELECT id FROM face_match_profiles WHERE active=1 ORDER BY id')]!=baseline_ids:
             raise HTTPException(409,'Saved face reviews changed during calibration. Analyze again.')
         c.execute('INSERT INTO face_match_profiles(id,report,revision) VALUES(?,?,?)',(identity,json.dumps(report),saved_revision))
-    return dict(profile_id=identity,eligible_people=report['eligible_people'],validation_faces=len(validation),additional_validation_matches=report['additional_validation_matches'])
+    return dict(profile_id=identity,eligible_people=report['eligible_people'],validation_faces=report['validation_faces'],additional_validation_matches=report['additional_validation_matches'])

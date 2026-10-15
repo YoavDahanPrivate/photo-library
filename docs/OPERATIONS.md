@@ -203,3 +203,32 @@ before `index.html`, and `version.json` last. Retain old assets for open session
 Inspect active scans/People jobs before a backend restart. Do not include runtime
 data, models, NAS passwords, personal originals, compiled output or machine-local
 deployment logs in Git. Operational snapshots/checkpoints stay outside the repo.
+
+
+Rejection learning adds `face_rejection_evidence`, derived entirely from saved
+face embeddings, confirmations and `face_rejections`. Its first migration clears
+legacy high-confidence flags once; suggestions remain available until ordinary
+reevaluation rebuilds their confidence. New rejections/corrective reassignments
+clear the affected identity's old high flags before automatic approval can use
+them. Include saved rejections and review history in catalogue backups; the
+derived evidence table and comparison cache can be rebuilt. This upgrade does
+not rewrite original media or existing face annotations.
+
+
+### People review source checkpoint
+
+The full source harness includes seven browser workflows. Its API responses and
+catalogues are isolated fixtures; set `DAHAN_QA_OUTPUT` to an external folder if
+screenshots should be retained. Build output, comparison caches, calibration
+reports, progress files, credentials and machine configuration remain runtime
+state outside Git. The first rejection-evidence upgrade demotes old high flags
+as described above; ordinary reevaluation rebuilds them without assigning faces.
+
+Frontend-only releases need no backend restart. Preserve old hashed assets and
+publish the index/version after the assets. Backend releases must include the
+new rejection, grouped-review and calibration modules together; wait for idle
+workers and retain rollback copies before restarting. Capture supervisor startup
+output/error logs, then verify health, the live manifest and operation state.
+Do not start automatic approval as a deployment smoke test. Reference-provenance
+separation remains a documented matching limitation, not a migration in this
+checkpoint.

@@ -1,14 +1,14 @@
 import React,{useEffect,useState} from 'react';
 import {LoaderCircle,CheckCircle2,AlertCircle,Square} from 'lucide-react';
 
-export type PeopleOperation={id:string;kind?:'reevaluate'|'auto-approve'|'calibrate';state:'queued'|'running'|'completed'|'cancelled'|'failed'|'interrupted';phase:string;started_at:number;updated_at:number;finished_at?:number;processed:number|null;total:number|null;unit?:string;error?:string;round?:number;rounds_completed?:number;approved_total?:number;review_revision?:number;stop_requested?:boolean;result?:{profile_warning?:string|null;profile_id?:string;evaluated?:number;suggestions?:number;saved_people?:number;approved?:number;rounds?:number;stop_reason?:string}};
+export type PeopleOperation={id:string;kind?:'reevaluate'|'auto-approve'|'calibrate';state:'queued'|'running'|'completed'|'cancelled'|'failed'|'interrupted';phase:string;started_at:number;updated_at:number;finished_at?:number;processed:number|null;total:number|null;unit?:string;error?:string;round?:number;rounds_completed?:number;approved_total?:number;review_revision?:number;stop_requested?:boolean;result?:{rejection_suppressed?:number;rejection_softened?:number;rejection_examples?:number;rejection_conflicts?:number;profile_warning?:string|null;profile_id?:string;evaluated?:number;suggestions?:number;saved_people?:number;approved?:number;rounds?:number;stop_reason?:string}};
 
 function duration(seconds:number){
   const value=Math.max(0,Math.floor(seconds));
   return value<60?`${value}s`:`${Math.floor(value/60)}m ${value%60}s`;
 }
 
-export default function PeopleProgress({operation,approving,approvalCount,connection,onCancel}:{operation:PeopleOperation|null;approving:boolean;approvalCount:number;connection:string;onCancel:()=>Promise<void>}){
+export default function PeopleProgress({operation,approving,approvalCount,connection,onCancel,onRetry,retryDisabled}:{operation:PeopleOperation|null;approving:boolean;approvalCount:number;connection:string;onCancel:()=>Promise<void>;onRetry?:()=>Promise<void>;retryDisabled?:boolean}){
   const [now,setNow]=useState(()=>Date.now()/1000);
   const [approvalStarted,setApprovalStarted]=useState(()=>Date.now()/1000);
   const [cancelling,setCancelling]=useState(false);
@@ -31,7 +31,7 @@ export default function PeopleProgress({operation,approving,approvalCount,connec
   const message=approving?'Waiting for the server to confirm the complete batch.':operation?.error||(calibrating?(running?'Testing saved labels on held-back photographs. Assignments and matching rules stay unchanged.':operation?.state==='completed'?'Calibration report ready in Improve matching with saved examples. No rules were enabled automatically.':'Calibration stopped. Saved reports remain available; matching rules stay unchanged.'):(running?
     stopping?'Stopping at a safe point. Completed approvals will stay saved.':automatic?'Approve high-confidence matches → reevaluate → repeat. You can keep browsing.':'Reevaluation is running in the background. You can keep browsing.':
     automatic?operation?.state==='completed'?'No more high-confidence matches remain in the visible library. Lower-confidence matches are left for review.':'Stopped. Completed approvals are saved; unapproved matches remain for review.':
-    operation?.state==='completed'?`${operation.result?.suggestions?.toLocaleString()||0} matches ready for review. No faces assigned automatically.`:'Existing assignments and previously saved suggestions are kept.'));
+    operation?.state==='completed'?`${operation.result?.suggestions?.toLocaleString()||0} matches ready for review. No faces assigned automatically.${operation.result?.rejection_suppressed?` ${operation.result.rejection_suppressed.toLocaleString()} lookalike suggestions withheld using your rejections.`:''}${operation.result?.rejection_softened?` ${operation.result.rejection_softened.toLocaleString()} matches kept in lower confidence because of rejected lookalikes.`:''}${operation.result?.rejection_conflicts?` ${operation.result.rejection_conflicts.toLocaleString()} rejected examples closely overlap confirmed faces and were kept face-specific.`:''}`:'Existing assignments and previously saved suggestions are kept.'));
   return <section className="people-operation" aria-label="Face review progress" aria-busy={approving||running}>
     <div className="people-operation-heading">
       {approving||running?<LoaderCircle className="people-operation-spinner" size={21}/>:failed?<AlertCircle size={21}/>:<CheckCircle2 size={21}/>}
@@ -40,6 +40,7 @@ export default function PeopleProgress({operation,approving,approvalCount,connec
       </div>
       <span className="people-operation-time">{duration(elapsed)} elapsed</span>
     </div>
+    {failed&&!calibrating&&onRetry&&<button className="outline" disabled={retryDisabled||approving} onClick={()=>void onRetry()}>Reevaluate matches</button>}
     {automatic&&!approving&&<div className="people-auto-totals">
       <strong>{(operation?.approved_total||0).toLocaleString()} approved</strong>
       <span>{operation?.round?`Round ${operation.round} · `:''}{operation?.rounds_completed||0} completed {(operation?.rounds_completed||0)===1?'round':'rounds'}</span>

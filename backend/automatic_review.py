@@ -21,7 +21,7 @@ def selection():
 
 
 def run(state, progress, save, check_stop):
-    from .people_review import reevaluate
+    from .people_review import reevaluate_current as reevaluate
     last = {}
     while True:
         check_stop()

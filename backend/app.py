@@ -724,7 +724,13 @@ def rename(person: int, body: Rename):
             "DELETE FROM unknown_faces WHERE face_id IN (SELECT id FROM faces WHERE person_id=?)",
             (person,),
         )
-        c.execute("DELETE FROM face_suggestions")
+        # A display-name edit must not erase everyone else's review queue.
+        # Newly named faces are no longer candidates; adding their references
+        # can change other matches, so keep those for manual review until fresh.
+        c.execute("DELETE FROM high_confidence_faces WHERE face_id IN (SELECT id FROM faces WHERE person_id=?)", (person,))
+        c.execute("DELETE FROM face_suggestions WHERE face_id IN (SELECT id FROM faces WHERE person_id=?)", (person,))
+        if not (previous["name"] or "").strip():
+            c.execute("DELETE FROM high_confidence_faces")
     return {"ok": True}
 
 
@@ -798,6 +804,8 @@ def correct(body: Correction):
                 ),
             ),
         )
+        from .face_rejection_learning import invalidate_high
+        invalidate_high(c, [row['person_id'] for row in previous if row['person_id'] != target])
         for row in previous:
             if row["person_id"] is not None and row["person_id"] != target:
                 c.execute(
@@ -877,6 +885,8 @@ def undo():
 from .people_review import router as review_router
 
 app.include_router(review_router)
+from .grouped_review import router as grouped_review_router
+app.include_router(grouped_review_router)
 from .face_calibration import router as calibration_router
 app.include_router(calibration_router)
 from .manual_faces import router as manual_router

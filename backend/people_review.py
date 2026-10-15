@@ -6,12 +6,14 @@ import numpy as np
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from .core import db
+from . import face_rejection_learning as rejection_learning
 
 router = APIRouter(prefix="/api/people")
 
-from .bulk_review import ApprovalBatch, approve_batch
+from .bulk_review import ApprovalBatch, approve_batch, reject_batch
 
 router.add_api_route("/approve-suggestions", approve_batch, methods=["POST"])
+router.add_api_route("/reject-suggestions", reject_batch, methods=["POST"])
 from .people_jobs import router as operations_router
 router.include_router(operations_router)
 
@@ -41,11 +43,12 @@ def reject_suggestion(body: Rejection):
             (body.face_id, body.person_id),
         )
         c.execute("DELETE FROM face_suggestions WHERE face_id=?", (body.face_id,))
+        rejection_learning.invalidate_high(c, [body.person_id])
         c.execute(
             "INSERT INTO actions(description,previous) VALUES(?,?)",
             ("Reject suggested identity", json.dumps({"rejections": previous})),
         )
-    return {"ok": True}
+    return {"ok": True, "learning_pending": True, "confidence_invalidated_for": body.person_id}
 
 
 class ArchiveSelection(BaseModel):
@@ -96,7 +99,7 @@ def suggestions():
         return [
             dict(r)
             for r in c.execute(
-                f"SELECT s.*,CASE WHEN EXISTS(SELECT 1 FROM high_confidence_faces h WHERE h.face_id=s.face_id) THEN 'high' ELSE 'lower' END AS confidence,p.name,f.media_id,f.person_id AS source_person_id,m.taken,e.support,e.score_cutoff,e.margin_cutoff FROM face_suggestions s JOIN people p ON p.id=s.person_id JOIN faces f ON f.id=s.face_id JOIN media m ON m.id=f.media_id LEFT JOIN face_match_evidence e ON e.face_id=f.id LEFT JOIN people current_person ON current_person.id=f.person_id WHERE f.status!='dismissed' AND trim(coalesce(current_person.name,''))='' AND trim(coalesce(p.name,''))!='' AND EXISTS(SELECT 1 FROM media m WHERE m.id=f.media_id AND {VISIBLE}) ORDER BY s.score DESC,s.face_id"
+                f"SELECT s.*,CASE WHEN EXISTS(SELECT 1 FROM high_confidence_faces h WHERE h.face_id=s.face_id) THEN 'high' ELSE 'lower' END AS confidence,p.name,f.media_id,f.person_id AS source_person_id,m.taken,e.support,e.score_cutoff,e.margin_cutoff,n.rejection_score,n.rejection_floor,n.rejection_examples FROM face_suggestions s JOIN people p ON p.id=s.person_id JOIN faces f ON f.id=s.face_id JOIN media m ON m.id=f.media_id LEFT JOIN face_match_evidence e ON e.face_id=f.id LEFT JOIN face_rejection_evidence n ON n.face_id=f.id LEFT JOIN people current_person ON current_person.id=f.person_id WHERE f.status!='dismissed' AND trim(coalesce(current_person.name,''))='' AND trim(coalesce(p.name,''))!='' AND EXISTS(SELECT 1 FROM media m WHERE m.id=f.media_id AND {VISIBLE}) ORDER BY s.score DESC,s.face_id"
             )
         ]
 
@@ -112,6 +115,19 @@ def vector(blob):
 @router.post("/reevaluate")
 def reevaluate_request():
     return reevaluate()
+
+
+def reevaluate_current(progress=lambda *args, **kwargs: None):
+    """Retry a changed snapshot; never publish matches based on stale corrections."""
+    conflicts = {"Face corrections changed during matching. Please retry.",
+                 "Matching rules changed during matching. Please retry."}
+    for attempt in range(3):
+        try:
+            return reevaluate(progress=progress)
+        except HTTPException as error:
+            if error.status_code != 409 or error.detail not in conflicts or attempt == 2:
+                raise
+            progress(f"Saved faces changed; refreshing matches (retry {attempt + 1} of 2)")
 
 
 def reevaluate(progress=lambda *args, **kwargs: None):
@@ -140,15 +156,38 @@ def reevaluate(progress=lambda *args, **kwargs: None):
     evidence=[]
     from .face_match_cache import compare
     rankings,comparison_report=compare(candidates,groups,progress)
-    for (row,_),scores in zip(candidates,rankings):
+    learned,learning_report=rejection_learning.build(rows,groups,rejected,progress)
+    feedback={}
+    selected={}
+    for index,((row,_),scores) in enumerate(zip(candidates,rankings)):
         scores.sort(reverse=True)
+        if scores and scores[0][0]>=.55 and scores[0][0]-(scores[1][0] if len(scores)>1 else 0)>=.06 and (row['id'],scores[0][1]) not in rejected:
+            selected.setdefault(scores[0][1],[]).append(index)
+    for person,indices in selected.items():
+        if person not in learned: continue
+        assessment=rejection_learning.assess(person,np.stack([candidates[index][1] for index in indices]),
+            [rankings[index][0][0] for index in indices],learned,progress)
+        feedback.update(zip(indices,assessment))
+    suppressed=softened=0
+    negative_evidence=[]
+    for index,((row,_),scores) in enumerate(zip(candidates,rankings)):
         if not scores: continue
         score,person,support=scores[0]
         margin=score-(scores[1][0] if len(scores)>1 else 0)
-        if (row["id"],person) in rejected or score<0.55 or margin<0.06: continue
+        if (row['id'],person) in rejected or score<0.55 or margin<0.06: continue
+        blocked,negative,floor=feedback.get(index,(False,None,None))
+        if blocked:
+            suppressed+=1
+            continue
         rule=policy.get(person,dict(score=.70,margin=.12,support=2))
-        plans.append((row["id"],person,score,margin,score>=rule['score'] and margin>=rule['margin'] and support>=2))
-        evidence.append((row['id'],support,rule['score'],rule['margin']))
+        cutoff=max(rule['score'],floor or rule['score'])
+        was_high=score>=rule['score'] and margin>=rule['margin'] and support>=2
+        high=score>=cutoff and margin>=rule['margin'] and support>=2
+        softened+=int(was_high and not high)
+        plans.append((row['id'],person,score,margin,high))
+        evidence.append((row['id'],support,cutoff,rule['margin']))
+        if negative is not None:
+            negative_evidence.append((row['id'],negative,floor,len(learned[person][0])))
     progress("Saving suggestions")
     with db() as c:
         c.execute("BEGIN IMMEDIATE")
@@ -157,13 +196,15 @@ def reevaluate(progress=lambda *args, **kwargs: None):
         if tuple(r[0] for r in c.execute('SELECT id FROM face_match_profiles WHERE active=1'))!=profile_revision:
             raise HTTPException(409,"Matching rules changed during matching. Please retry.")
         progress("Saving suggestions")
+        c.execute("DELETE FROM face_rejection_evidence")
+        c.executemany("INSERT INTO face_rejection_evidence VALUES(?,?,?,?)",negative_evidence)
         c.execute("DELETE FROM face_match_evidence")
         c.executemany("INSERT INTO face_match_evidence VALUES(?,?,?,?)",evidence)
         c.execute("DELETE FROM face_suggestions")
         c.execute("DELETE FROM high_confidence_faces")
         c.executemany("INSERT INTO face_suggestions VALUES(?,?,?,?)",[p[:4] for p in plans])
         c.executemany("INSERT INTO high_confidence_faces VALUES(?)",[(p[0],) for p in plans if p[4]])
-    return {"evaluated":len(candidates),"assigned":0,"suggestions":len(plans),"saved_people":len(saved),"profile_warning":profile_warning,**comparison_report}
+    return {"evaluated":len(candidates),"assigned":0,"suggestions":len(plans),"saved_people":len(saved),"profile_warning":profile_warning,"rejection_suppressed":suppressed,"rejection_softened":softened,**learning_report,**comparison_report}
 
 @router.get("/{group_id}/match")
 def group_match(group_id: int):
@@ -185,6 +226,7 @@ def group_match(group_id: int):
             saved.setdefault(row['person_id'], []).append(v)
             names[row['person_id']] = row['name']
     scores = []
+    individual_scores = {}
     # Bounded matrix blocks avoid allocating group-size x library-size arrays.
     for person, exemplars in saved.items():
         best = []
@@ -194,6 +236,7 @@ def group_match(group_id: int):
             for start in range(0, len(exemplars), 512):
                 maximum = np.maximum(maximum, (batch @ np.stack(exemplars[start:start+512]).T).max(axis=1))
             best.extend(maximum.tolist())
+        individual_scores[person]=best
         scores.append((float(np.mean(best)), person, sum(v >= 0.55 for v in best)))
     scores.sort(reverse=True)
     if not scores:
@@ -202,6 +245,13 @@ def group_match(group_id: int):
     margin = score - (scores[1][0] if len(scores) > 1 else 0)
     if person in rejected or score < 0.55 or margin < 0.06 or support < len(candidates) * 0.6:
         return {"match": None}
+    with db() as c:
+        negative_rows=c.execute("SELECT f.*,p.name FROM faces f LEFT JOIN people p ON p.id=f.person_id WHERE f.status!='dismissed' AND EXISTS(SELECT 1 FROM media m WHERE m.id=f.media_id AND m.status='ready') AND EXISTS(SELECT 1 FROM face_rejections r WHERE r.face_id=f.id AND r.person_id=?)",(person,)).fetchall()
+        pairs={(row['id'],person) for row in negative_rows}
+    learned,_=rejection_learning.build(negative_rows,[(person,np.stack(saved[person]),None)],pairs)
+    feedback=rejection_learning.assess(person,np.stack(candidates),individual_scores[person],learned)
+    if any(blocked or (floor is not None and value<floor) for value,(blocked,_,floor) in zip(individual_scores[person],feedback)):
+        return {"match":None}
     return {"match": {"person_id": person, "name": names[person], "count": support}}
 
 
