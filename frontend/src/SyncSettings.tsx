@@ -5,10 +5,10 @@ import PeopleNames from "./PeopleNames";
 import DuplicateTools from "./DuplicateTools";
 import React, {useEffect, useState} from "react";
 
-type ToolsSection="databases"|"sync"|"duplicates"|"trash"|"names";
+type ToolsSection="databases"|"sync"|"duplicates"|"trash"|"names"|"people";
 function sectionFromLocation():ToolsSection {
   const value=window.location.hash.replace("#tools/","");
-  return ["databases","sync","duplicates","trash","names"].includes(value)?value as ToolsSection:"databases";
+  return ["databases","sync","duplicates","trash","names","people"].includes(value)?value as ToolsSection:"databases";
 }
 type Settings = {frequency:string;time:string;weekday:number;month_day:number;timezone:string;auto_assign:boolean};
 type Run = {id:string;started:string;finished:string|null;state:string;reason:string;error:string|null;progress:SyncProgress};
@@ -17,7 +17,7 @@ async function request(path:string,method="GET",body?:unknown) {
   const r=await fetch("/api/sync"+path,{method,headers:{"Content-Type":"application/json"},...(body===undefined?{}:{body:JSON.stringify(body)})});
   return readApiResponse(r);
 }
-export default function SyncSettings({onClose,hideFormatDuplicates,onHideFormatDuplicates,onPeopleChanged,onBrowseAlbum}:{onBrowseAlbum?:(databaseId:string,sourceId:string,albumId:string)=>void;onPeopleChanged:()=>void;onClose:()=>void;hideFormatDuplicates:boolean;onHideFormatDuplicates:(value:boolean)=>void}) {
+export default function SyncSettings({peopleMaintenance,peopleAttention,onClose,hideFormatDuplicates,onHideFormatDuplicates,onPeopleChanged,onBrowseAlbum}:{peopleMaintenance?:React.ReactNode;peopleAttention?:boolean;onBrowseAlbum?:(databaseId:string,sourceId:string,albumId:string)=>void;onPeopleChanged:()=>void;onClose:()=>void;hideFormatDuplicates:boolean;onHideFormatDuplicates:(value:boolean)=>void}) {
   const [section,setSection]=useState<ToolsSection>(sectionFromLocation);
   useEffect(()=>{const changed=()=>{if(window.location.hash.startsWith("#tools/"))setSection(sectionFromLocation());};window.addEventListener("hashchange",changed);return()=>window.removeEventListener("hashchange",changed);},[]);
   useEffect(()=>{window.history.replaceState(null,"","#tools/"+section);},[section]);
@@ -36,7 +36,8 @@ export default function SyncSettings({onClose,hideFormatDuplicates,onHideFormatD
   const action=async(fn:()=>Promise<void>)=>{setBusy(true);setError("");setMessage("");try{await fn();}catch(e){setError(String(e));}finally{setBusy(false);}};
   return <section className="sync-settings" aria-labelledby="sync-title">
     <header><div><h1 id="sync-title">Library tools</h1><p>Manage Databases, Sources and Albums, sync, and library maintenance.</p></div><button onClick={onClose}>Back to library</button></header>
-    <div className="sync-actions library-tools-tabs" role="group" aria-label="Library tools sections"><button aria-pressed={section==="databases"} onClick={()=>setSection("databases")}>Databases, Sources & Albums</button><button aria-pressed={section==="sync"} onClick={()=>setSection("sync")}>Sync & recognition</button><button aria-pressed={section==="duplicates"} onClick={()=>setSection("duplicates")}>Duplicate cleanup</button><button aria-pressed={section==="trash"} onClick={()=>setSection("trash")}>Trash & restore</button><button aria-pressed={section==="names"} onClick={()=>setSection("names")}>People names</button></div>
+    <div className="sync-actions library-tools-tabs" role="group" aria-label="Library tools sections"><button aria-pressed={section==="databases"} onClick={()=>setSection("databases")}>Databases, Sources & Albums</button><button aria-pressed={section==="sync"} onClick={()=>setSection("sync")}>Sync & recognition</button><button aria-pressed={section==="duplicates"} onClick={()=>setSection("duplicates")}>Duplicate cleanup</button><button aria-pressed={section==="trash"} onClick={()=>setSection("trash")}>Trash & restore</button><button className="people-maintenance-tab" aria-pressed={section==="people"} onClick={()=>setSection("people")}>People review{peopleAttention&&<span className="tools-attention-dot" aria-label="People need attention"/>}</button><button aria-pressed={section==="names"} onClick={()=>setSection("names")}>People names</button></div>
+    {section==="people"&&peopleMaintenance}
     <details className="tools-preferences"><summary>Display & app preferences</summary>
     <section className="library-display-settings" aria-label="Library display"><h2>Library display</h2><label className="sync-check"><input type="checkbox" checked={hideFormatDuplicates} onChange={e=>onHideFormatDuplicates(e.target.checked)}/>Hide HEIC/JPEG duplicate copies</label><p>Show one matching format copy in the library, preferring HEIC. Both files stay stored. This preference is saved automatically on this device.</p></section>
     <details className="iphone-app-help"><summary>Use Dahan without Safari’s browser bars</summary><p>On iPhone: open Dahan in Safari, tap Share, choose Add to Home Screen, enable Open as Web App if shown, and tap Add. Launch Dahan from that new icon.</p><p>The app stays in its own window. Expand shows the original photo; Collapse returns to the details view. Your iPhone may still show system status indicators.</p></details>
@@ -91,7 +92,7 @@ export default function SyncSettings({onClose,hideFormatDuplicates,onHideFormatD
       </div>
       {section==="databases"&&<DatabaseSettings onChanged={onPeopleChanged} onBrowseAlbum={onBrowseAlbum}/> }
       {section==="names"&&<PeopleNames onChanged={onPeopleChanged}/>}
-      <div hidden={section==="sync"||section==="names"||section==="databases"}><DuplicateTools syncRunning={data.running} view={section==="trash"?"trash":"duplicates"} onViewChange={setSection}/></div>
+      <div hidden={section==="sync"||section==="names"||section==="databases"||section==="people"}><DuplicateTools syncRunning={data.running} view={section==="trash"?"trash":"duplicates"} onViewChange={setSection}/></div>
     </>}
   </section>;
 }

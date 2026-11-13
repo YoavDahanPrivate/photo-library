@@ -1,3 +1,4 @@
+import useLibraryViewport from "./useLibraryViewport";
 import MediaInfoSheet from "./MediaInfoSheet";
 import {SlidersHorizontal} from "lucide-react";
 import {createPortal} from "react-dom";
@@ -186,7 +187,17 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
   },[]);
   const [viewerBusy,setViewerBusy]=useState(false);
   const [neighbors,setNeighbors]=useState<ViewerNeighbors>({previous:null,next:null,position:null,total:0});
-  const closeViewer=()=>{collapseViewer();viewerSequence.current++;setDetail(null);setViewerBusy(false);};
+  const revealMedia=useRef<string|null>(null);
+  const [viewerClosing,setViewerClosing]=useState(false),[viewerDrag,setViewerDrag]=useState(0);
+  const viewerCloseTimer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined);
+  useEffect(()=>()=>clearTimeout(viewerCloseTimer.current),[]);
+  const closeViewer=(animated=false)=>{
+    if(viewerClosing)return;
+    revealMedia.current=detail?.id||null;
+    const finish=()=>{collapseViewer();viewerSequence.current++;setDetail(null);setViewerBusy(false);setViewerClosing(false);setViewerDrag(0);};
+    if(animated&&!window.matchMedia('(prefers-reduced-motion: reduce)').matches){setViewerClosing(true);viewerCloseTimer.current=setTimeout(finish,240);}
+    else finish();
+  };
   const [displayOptionsOpen,setDisplayOptionsOpen]=useState(false);
   useEffect(()=>{
     if(!displayOptionsOpen)return;
@@ -286,6 +297,7 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
     row.support!=null&&row.support<2?'Needs another supporting photograph':null,
   ].filter(Boolean).join(' · ')||'Review this match before assigning';
   const [page, setPage] = useState<"library" | "people">("library");
+  useLibraryViewport(page==="library"&&!settingsOpen);
   const [peopleQuery, setPeopleQuery] = useState("");
   const [geo, setGeo] = useState<GeoSelection>(emptyGeo);
   const [view, setView] = useState(()=>{try{return localStorage.getItem("dahan.view."+profile.id)||"months";}catch{return "months";}});
@@ -323,7 +335,7 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
     [selected, setSelected] = useState<string[]>([]),
     [personName, setPersonName] = useState(""),
     [target, setTarget] = useState("");
-  const peopleBrowse=usePeopleBrowse(people);
+  const peopleBrowse=usePeopleBrowse(people,profile);
   const visiblePeople=peopleBrowse.visible;
   useEffect(()=>{setPeopleLimit(120);},[peopleBrowse.preferences]);
   useEffect(()=>{setSelectedGroups([]);},[peopleBrowse.preferences.known,peopleBrowse.preferences.unknown]);
@@ -404,7 +416,6 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
   }, []);
   useEffect(() => {
     let active = true;
-    if (page !== "people") return;
     api<typeof suggestions>("/people/suggestions")
       .then((rows) => {
         if (active)
@@ -597,6 +608,11 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, [expanded]);
+  const searchFilterActive=!!(expression.trim()||q.trim()||kind||orientation||start||end||peopleFilter.length||hasGeo(geo));
+  const clearActiveSearch=()=>{
+    setResultsLoading(true);setExpression("");setQ("");setKind("");setOrientation("");setStart("");setEnd("");setPeopleFilter([]);setGeo(emptyGeo);setSearchOpen(false);setDisplayOptionsOpen(false);
+    requestAnimationFrame(()=>{document.querySelector('main.library-workspace-page')?.scrollTo({top:0});document.querySelector<HTMLButtonElement>('[aria-label="Search library"]')?.focus({preventScroll:true});});
+  };
   const reset = () => {
     setExpression("");
     setGeo(emptyGeo);
@@ -911,6 +927,17 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
       if (expected === generation.current) setLoading(false);
     }
   };
+  useEffect(()=>{
+    const id=revealMedia.current;
+    if(!id||detail)return;
+    if(page!=="library"||settingsOpen){revealMedia.current=null;return;}
+    const tile=Array.from(document.querySelectorAll<HTMLElement>('[data-media-id]')).find(node=>node.dataset.mediaId===id);
+    if(tile){
+      revealMedia.current=null;
+      requestAnimationFrame(()=>{tile.scrollIntoView({block:"center",inline:"nearest"});tile.querySelector<HTMLButtonElement>('.photo-card')?.focus({preventScroll:true});});
+    }else if(!loading&&items.length<total&&!moreError)void loadMore();
+    else if(items.length>=total||moreError)revealMedia.current=null;
+  },[detail,items,loading,page,settingsOpen,total,moreError]);
   useEffect(() => {
     const gallery=document.querySelector<HTMLElement>(".unified-gallery-scroll");
     const mobile=document.querySelector<HTMLElement>("main.library-workspace-page");
@@ -955,6 +982,7 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
   const peoplePosition = useRef<{y:number; anchors:{id:string;top:number}[]} | null>(null);
   const restorePeoplePosition = useRef(false);
   const returnToPeople = () => {
+    setReviewFocus(null);
     if (!peoplePosition.current) peoplePosition.current = {y:0,anchors:[]};
     restorePeoplePosition.current = true;
     setGroup(null);
@@ -998,7 +1026,6 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
   }, [page, group, people]);
   useEffect(() => {
     let active = true;
-    if (page !== "people") return;
     api<typeof approvedReviews>("/people/review/approved").then((rows) => {if(active) setApprovedReviews(rows);}).catch((e) => setError(String(e)));
     return () => {active=false;};
   }, [revision, page]);
@@ -1014,290 +1041,15 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
   const activeGroup = people.find((p) => p.id === group);
   const groupSuggestions = new Map<number, {name:string;count:number}>();
   if (groupMatch && groupMatch.group === group && !activeGroup?.name) groupSuggestions.set(groupMatch.person_id, groupMatch);
-  return (
-    <div inert={!!detail} className={"app-shell"+(reviewFocus&&page==="people"&&group===null&&!settingsOpen?" review-focused":"")}>
-      <aside className="sidebar" inert={sheet}>
-        <a
-          className="brand"
-          href="#"
-          onClick={(e) => {
-            e.preventDefault();
-            setSettingsOpen(false); setPage("library");
-          }}
-        >
-          <span className="brand-logo photo-brand-mark" aria-hidden="true" />
-          <span>
-            Dahan<span className="brand-sub">FAMILY LIBRARY</span>
-          </span>
-        </a>
-        <div className="nav-label">YOUR COLLECTION</div>
-        <nav>
-          <button
-            className={!settingsOpen && page === "library" ? "active" : ""}
-            onClick={() => {setSettingsOpen(false);setPage("library");}}
-          >
-            <Images size={20} />
-            Library
-          </button>
-          <button
-            className={!settingsOpen && page === "people" ? "active" : ""}
-            onClick={() => {
-              setSettingsOpen(false); setPage("people");
-              returnToPeople();
-            }}
-          >
-            <Users size={20} />
-            People<span className="nav-count">{people.length}</span>
-          </button>
-          <button
-            onClick={() => {
-              setSettingsOpen(false); setPage("library");
-              setSheet(true);
-            }}
-          >
-            <Layers size={20} />
-            Sources & albums
-          </button>
-          <button className={settingsOpen ? "active" : ""} onClick={()=>{window.location.hash="tools/databases";setSettingsOpen(true);}}><HardDrive size={20}/>Library tools</button>
-        </nav>
-        <div className="sidebar-bottom">
-          <HardDrive size={18} />
-          <div>
-            Stored on your SSD<small>Local family library</small>
-          </div>
-        </div>
-      </aside>
-      <main className={!settingsOpen && page === "library" ? "library-workspace-page" : ""} inert={sheet}>
-        <header className="topbar library-topbar">
-          <h1>{settingsOpen ? "Library tools" : page === "library" ? "Library" : "People"}</h1>
-          <div className="library-topbar-actions">
-            {page==="library"&&!settingsOpen&&<button className="outline library-options-toggle" aria-label="View options" aria-expanded={displayOptionsOpen} aria-controls="library-view-options" onClick={()=>setDisplayOptionsOpen(v=>!v)}><SlidersHorizontal size={18}/></button>}
-            <button className="outline library-search-toggle" aria-label="Search library" aria-expanded={searchOpen && page==='library' && !settingsOpen} aria-controls="library-search-tools" onClick={()=>{setSettingsOpen(false);setPage('library');setSearchOpen(true);requestAnimationFrame(()=>{document.querySelector('main.library-workspace-page')?.scrollTo({top:0});document.querySelector<HTMLInputElement>('[aria-label="Search photos"]')?.focus();});}}><Search size={18}/><span>Search</span></button>
-            <LibraryNotifications profileId={profile.id} noticeKey={peopleOperation ? JSON.stringify([peopleOperation.id,peopleOperation.state,peopleOperation.error,peopleOperation.result]) : approvingAll ? 'approving' : ''} title={peopleOperation?.phase || 'Saving assignments'}>
-              <PeopleProgress persistent onReview={()=>{setSettingsOpen(false);setPage("people");setGroup(null);setReviewPerson("");setReviewFocus(null);setReviewOptionsOpen(true);requestAnimationFrame(()=>{const target=document.querySelector<HTMLElement>(peopleOperation?.kind==='calibrate'?'.matching-quality':'.people-review-tools');if(target instanceof HTMLDetailsElement)target.open=true;target?.scrollIntoView({block:'start'});});}} operation={peopleOperation} approving={approvingAll} approvalCount={approvalCount} connection={peopleProgressError} onRetry={()=>reevaluatePeople()} retryDisabled={busy||!!savingReviews.length} onCancel={async()=>{if(peopleOperation)try{await api("/people/operations/"+peopleOperation.id+"/cancel",{});}catch(e){setError(String(e));throw e;}}}/>
-            </LibraryNotifications>
-            <details className="library-appearance"><summary aria-label="Appearance" title="Appearance">⋯</summary>          <div className="appearance-panel"><button className="appearance-close" aria-label="Close menu" onClick={e=>{const menu=e.currentTarget.closest('details');if(menu){menu.open=false;menu.querySelector<HTMLElement>('summary')?.focus();}}}>Close <X size={14}/></button><label className="theme-picker">Theme <select aria-label="Color theme" value={theme} onChange={(e) => setTheme(e.target.value)}><option value="sage">Sage</option><option value="ocean">Ocean</option><option value="plum">Plum</option><option value="black">Black</option><option value="dark">Dark</option></select></label>{page==="library"&&!settingsOpen&&<button onClick={e=>{setSelectingMedia(true);const menu=e.currentTarget.closest('details');if(menu)menu.open=false;}}>Select photos &amp; videos</button>}</div></details>
-            <button className="outline profile-switch" onClick={onSwitchProfile} title="Account settings">{profile.name}<span className="account-label"> · Account</span></button>
-          </div>
-          {page==="library"&&!settingsOpen&&<div id="library-view-options" className={"library-filter-slot"+(displayOptionsOpen?" options-open":"")} ref={setHeaderControls}/>}
-        </header>
-        {profileSaveError&&<div className="profile-save-error" role="alert">{profileSaveError}</div>}
-        {liveSync && (liveSync.running || ["paused","cancelled","interrupted"].includes(liveSync.runs[0]?.state)) && <section className="live-sync" aria-label="Library sync"><strong>Sync · {liveSync.runs[0]?.state}</strong><span>{liveSync.runs[0]?.progress.phase} · {(status?.counts.ready||0).toLocaleString()} viewable</span><button onClick={()=>{window.location.hash="tools/sync";setSettingsOpen(true);}}>Sync controls</button>{liveSync.runs[0]?.progress.live_added!==undefined&&<span>{liveSync.runs[0].progress.live_added!.toLocaleString()} new items · {(liveSync.runs[0].progress.previews_published||0).toLocaleString()} previews processed</span>}{liveSync.runs[0]?.progress.database_id&&databaseChoices.some(([id])=>id===liveSync.runs[0].progress.database_id)&&<button onClick={()=>{reset();setDatabaseScope(liveSync.runs[0].progress.database_id!);setSourceScope("");setAlbumScope("");setPage("library");setSettingsOpen(false);}}>View importing Database</button>}<small>{liveSync.running?"New previews appear while scanning. Face recognition follows preview publishing.":"Progress is saved. Resume from Library tools when ready."}</small></section>}
-        {!liveSync?.runs.length && status?.scan && (
-          <section className="scan-progress" aria-label="Full library scan">
-            <strong>
-              {status.scan.stale
-                ? "Scan heartbeat stopped"
-                : status.scan.state === "running"
-                  ? "Full library scan running"
-                  : status.scan.state === "completed"
-                    ? "Full library scan complete"
-                    : status.scan.state === "completed_with_issues"
-                      ? "Full scan finished with issues"
-                      : `Full scan ${status.scan.state}`}
-            </strong>
-            <p>
-              {(status.counts.ready || 0).toLocaleString()} of{" "}
-              {status.total.toLocaleString()} files browsable ·{" "}
-              {status.scan.phase}
-              {status.scan.run_errors
-                ? ` · ${status.scan.run_errors} processing errors`
-                : ""}
-              {status.scan.changed_sources
-                ? ` · ${status.scan.changed_sources} changed sources need review`
-                : ""}
-              {status.scan.discovery_errors
-                ? ` · ${status.scan.discovery_errors} folders/files could not be read`
-                : ""}
-            </p>
-            {status.scan.state === "running" && (
-              <>
-                <progress
-                  aria-label="Files processed in this scan"
-                  max={status.scan.to_process || 1}
-                  value={status.scan.processed || 0}
-                />
-                <p className="small-note">
-                  {status.scan.remaining_seconds
-                    ? `Estimated time remaining: ${Math.ceil(status.scan.remaining_seconds / 3600)} hours. `
-                    : ""}
-                  New results appear as files finish. Existing names and
-                  corrections are preserved.
-                </p>
-                <button
-                  onClick={async () => {
-                    try {
-                      await api("/scan/pause", {});
-                      setNotice(
-                        "Pause requested. Current files will finish first.",
-                      );
-                    } catch (e) {
-                      setError(String(e));
-                    }
-                  }}
-                >
-                  Pause scan
-                </button>
-              </>
-            )}
-            {status.scan.error && <p role="alert">{status.scan.error}</p>}
-          </section>
-        )}
-        {page === "people" && !settingsOpen && <PeopleProgress onReview={()=>{setSettingsOpen(false);setPage("people");setGroup(null);setReviewPerson("");setReviewFocus(null);setReviewOptionsOpen(true);requestAnimationFrame(()=>{const target=document.querySelector<HTMLElement>(peopleOperation?.kind==='calibrate'?'.matching-quality':'.people-review-tools');if(target instanceof HTMLDetailsElement)target.open=true;target?.scrollIntoView({block:'start'});});}} operation={peopleOperation} approving={approvingAll} approvalCount={approvalCount} connection={peopleProgressError} onRetry={()=>reevaluatePeople()} retryDisabled={busy||!!savingReviews.length} onCancel={async()=>{if(peopleOperation)try{await api("/people/operations/"+peopleOperation.id+"/cancel",{});}catch(e){setError(String(e));throw e;}}}/>}
-        {connectionError && <div role="alert" className="error">{connectionError} Retrying automatically…</div>}
-        {error && (
-          <div role="alert" className="error">
-            {error}
-            <button aria-label="Dismiss error" onClick={() => setError("")}>
-              <X size={18} />
-            </button>
-          </div>
-        )}
-        {settingsOpen ? <SyncSettings onBrowseAlbum={(databaseId,sourceId,albumId)=>{setDatabaseScope(databaseId);setIncludeChildren(false);setSourceScope(sourceId);setAlbums([]);setAlbumScope(albumId);setSettingsOpen(false);setPage("library");setResultsLoading(true);}} onPeopleChanged={()=>setRevision(v=>v+1)} onClose={() => setSettingsOpen(false)} hideFormatDuplicates={hideFormatDuplicates} onHideFormatDuplicates={setHideFormatDuplicates} /> : page === "library" ? (
-          <>
-            {(albumScope||sourceScope||databaseScope)&&<p className="library-album-scope">Browsing {albumScope?(sources.find(s=>s.album_id===albumScope)?.album||'selected album'):'selected source'} <button onClick={()=>{setAlbumScope('');setSourceScope('');setDatabaseScope('');setIncludeChildren(false);setScope(phoneNames);setAlbums([]);}}>Show all my sources</button></p>}
-            <UnifiedSearch onSearchComplete={()=>{setSearchOpen(false);setDisplayOptionsOpen(false);requestAnimationFrame(()=>{document.querySelector('main.library-workspace-page')?.scrollTo({top:0});const gallery=document.querySelector<HTMLElement>('.unified-gallery-scroll');gallery?.focus({preventScroll:true});});}} searchOpen={searchOpen} onCloseSearch={()=>{setSearchOpen(false);document.querySelector<HTMLButtonElement>('[aria-label="Search library"]')?.focus();}} sourceSelection={scope} onSourceChange={(selected)=>{setDatabaseScope("");setSourceScope("");setIncludeChildren(false);setAlbumScope("");setAlbums([]);setResultsLoading(true);setScope(selected);}} resultsLoading={resultsLoading} people={people} sources={sources} expression={expression} query={query().toString()} onApply={(value) => {
-              void recordProfileSearch(profile.id,value,scope).catch(()=>setProfileSaveError("Your search ran, but its history could not be saved."));
-              setResultsLoading(true);
-              setAlbums([]);setAlbumScope("");setGeo(emptyGeo);setQ("");setPeopleFilter([]);setStart("");setEnd("");setKind("");setOrientation("");setExpression(value);
-            }}>
-              {(mediaControl,sourceControl)=><>
-              {headerControls&&createPortal(<div className="gallery-controls" aria-label="Gallery display controls">
-              <div className="library-options-heading"><strong>View options</strong><button onClick={()=>{setDisplayOptionsOpen(false);document.querySelector<HTMLButtonElement>('.library-options-toggle')?.focus();}}>Done</button></div>
-              {sourceControl}
-              <select aria-label="Timeline grouping" value={view} onChange={e=>setView(e.target.value)}>{['years','months','days','all'].map(v=><option key={v} value={v}>{v==='all'?'All photos':v[0].toUpperCase()+v.slice(1)}</option>)}</select>
-              {mediaControl}
-              <details className="library-sort-options"><summary>Sort options</summary><div className="library-sort-menu"><select className="gallery-media-filter gallery-sort-basis" aria-label="Gallery sort basis" title="Sort by" value={sortBy} onChange={e=>setSortBy(e.target.value)}><option value="capture">Sort by: Capture date</option><option value="file">Sort by: File date</option></select>
-              <label className="sort-control">
-                <span className="sort-label">Date order</span>
-                <select
-                  aria-label="Result date order"
-                  value={order}
-                  onChange={(e) => setOrder(e.target.value)}
-                >
-                  <option value="desc">Newest first</option>
-                  <option value="asc">Oldest first</option>
-                </select>
-              </label></div></details>
-                <span className="result-count" aria-live="polite">
-                  {total.toLocaleString()} moments
-                </span>
-              </div>,headerControls)}
-              <MetadataTools query={query().toString()} selected={selectedMedia} selecting={selectingMedia} onSelecting={value=>{setSelectingMedia(value);if(!value)setSelectedMedia([]);}} onSelectLoaded={()=>setSelectedMedia(items.map(m=>m.id))} onClear={()=>setSelectedMedia([])} count={total} revision={revision} onSaved={metadataSaved}/>
-              {sortBy==='file'&&<p className="metadata-note">Sorting by filesystem timestamp. Timeline groups still describe capture dates; missing capture dates stay unknown.</p>}
-              {loading && !items.length ? (
-                <div className="gallery-loading-space" aria-hidden="true"/>
-              ) : !items.length ? (
-                <div className="empty">
-                  <Images size={36} />
-                  <h2>No moments in this view</h2>
-                  <p>
-                    {scope.length
-                      ? "Try another source, album, or date."
-                      : "Choose at least one source to browse."}
-                  </p>
-                  <button className="primary" onClick={reset}>
-                    Show all files
-                  </button>
-                </div>
-              ) : (
-                Object.entries(groups)
-                  .sort(([a], [b]) =>
-                    a === "Unknown date"
-                      ? 1
-                      : b === "Unknown date"
-                        ? -1
-                        : order === "asc"
-                          ? a.localeCompare(b)
-                          : b.localeCompare(a),
-                  )
-                  .map(([day, photos]) => (
-                    <section className="day-group" key={day}>
-                      <div className="day-heading">
-                        <h2>
-                          {day === "Unknown date" ||
-                          day === "All moments" ||
-                          view === "years" || day.length<10
-                            ? day
-                            : new Date(
-                                day +
-                                  (view === "months" ? "-01" : "") +
-                                  "T12:00:00",
-                              ).toLocaleDateString(
-                                undefined,
-                                view === "months"
-                                  ? { month: "long", year: "numeric" }
-                                  : {
-                                      weekday: "long",
-                                      day: "numeric",
-                                      month: "long",
-                                      year: "numeric",
-                                    },
-                              )}
-                        </h2>
-                        <span>{photos.length} shown</span>
-                      </div>
-                      <BufferedGallery items={photos} onOpen={resultsLoading ? ()=>{} : open} selecting={selectingMedia} selected={selectedMedia} onSelect={id=>setSelectedMedia(old=>old.includes(id)?old.filter(i=>i!==id):[...old,id])} />
-                    </section>
-                  ))
-              )}
-              {items.length < total && (
-                <div className="load-more" ref={loadSentinel} role="status">
-                  {moreError ? <><span>{moreError}</span><button onClick={() => void loadMore()}>Retry loading</button></> : <span>{loading ? "Loading more photos…" : "Scroll to explore more"} · {items.length.toLocaleString()} of {total.toLocaleString()}</span>}
-                </div>
-              )}
-              <footer className="library-footer">
-                <Info size={15} />
-                <span>
-                  Face groups need review. Scene, dog and portrait-type search
-                  are the next milestone.
-                </span>
-                <span>{status?.counts.ready || 0} indexed</span>
-              </footer>
-              </>}
-            </UnifiedSearch>
-          </>
-        ) : (
-          <>
-            <div className="page-heading">
-              <div>
-                <span className="eyebrow">FAMILIAR FACES</span>
-                <h1>
-                  {group === -1
-                    ? "Unknown People"
-                    : group === null
-                      ? "People"
-                      : activeGroup?.name || "An unnamed person"}
-                </h1>
-                <p>Help your library put a name to a face.</p>
-              </div>
-              <button
-                className="outline"
-                disabled={busy || peopleWorking || approvingAll || savingReviews.length > 0}
-                onClick={() => perform("/undo", {})}
-              >
-                <Undo2 size={17} />
-                Undo last change
-              </button>
-            </div>
-            {group === null ? (
-              <>
-                <div className="review-note">
-                  <Info size={18} />
-                  <div>
-                    <strong>Suggestions, ready for your review</strong>
-                    <p>
-                      Open a group to name it, move incorrect faces, or split it
-                      into different people. This review covers all Sources.
-                    </p>
-                  </div>
-                </div>
-                <section
+  const peopleAttention=!!suggestions.length||!!peopleProgressError||peopleOperation?.state==='failed'||peopleOperation?.state==='interrupted'||!!peopleOperation?.result?.profile_warning;
+  const attention=peopleAttention?<span className="tools-attention-dot" aria-label="People need attention"/>:null;
+  const openPeopleTools=()=>{setPage("people");setSettingsOpen(true);setReviewFocus(null);window.location.hash="tools/people";};
+  const peopleMaintenance=<>        <PeopleProgress onReview={()=>{setSettingsOpen(true);window.location.hash="tools/people";setPage("people");setGroup(null);setReviewPerson("");setReviewFocus(null);setReviewOptionsOpen(true);requestAnimationFrame(()=>{const target=document.querySelector<HTMLElement>(peopleOperation?.kind==='calibrate'?'.matching-quality':'.people-review-tools');if(target instanceof HTMLDetailsElement)target.open=true;target?.scrollIntoView({block:'start'});});}} operation={peopleOperation} approving={approvingAll} approvalCount={approvalCount} connection={peopleProgressError} onRetry={()=>reevaluatePeople()} retryDisabled={busy||!!savingReviews.length} onCancel={async()=>{if(peopleOperation)try{await api("/people/operations/"+peopleOperation.id+"/cancel",{});}catch(e){setError(String(e));throw e;}}}/><section
                   className="people-review-tools"
                   aria-label="People review tools"
                 >
                   {reviewFocus&&<header className="review-workspace-header" aria-label="Expanded face review">
-                    <button className="outline" onClick={()=>setReviewFocus(null)}><ArrowLeft size={17}/>Back to People</button>
+                    <button className="outline" onClick={()=>{setReviewFocus(null);setSettingsOpen(false);setPage("people");}}><ArrowLeft size={17}/>Back to People</button>
                     <button className="outline review-options-toggle" aria-expanded={reviewOptionsOpen} aria-controls="face-review-options" onClick={()=>setReviewOptionsOpen(value=>!value)}>{reviewOptionsOpen?'Hide review options':'Review options'}</button>
                     <div className="review-confidence-switch" role="group" aria-label="Review confidence">
                       {(['high','lower'] as const).map(level=><button key={level} aria-pressed={reviewFocus===level} onClick={()=>{setReviewFocus(level);window.scrollTo(0,0);}}>{level==='high'?'High-confidence':'Lower-confidence'}<span>{reviewMatches(level).length.toLocaleString()}</span></button>)}
@@ -1436,7 +1188,279 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
                     </div>
                     {approvedOpen && approvedLimit < approvedReviews.length && <button onClick={() => setApprovedLimit((n) => n + 40)}>Show next 40 approvals</button>}
                   </details>}
-                </section>
+                </section></>;
+  return (
+    <div inert={!!detail} className={"app-shell"+(reviewFocus&&page==="people"&&group===null&&!settingsOpen?" review-focused":"")}>
+      <aside className="sidebar" inert={sheet}>
+        <a
+          className="brand"
+          href="#"
+          onClick={(e) => {
+            e.preventDefault();
+            setSettingsOpen(false); setPage("library");
+          }}
+        >
+          <span className="brand-logo photo-brand-mark" aria-hidden="true" />
+          <span>
+            Dahan<span className="brand-sub">FAMILY LIBRARY</span>
+          </span>
+        </a>
+        <div className="nav-label">YOUR COLLECTION</div>
+        <nav>
+          <button
+            className={!settingsOpen && page === "library" ? "active" : ""}
+            onClick={() => {setSettingsOpen(false);setPage("library");}}
+          >
+            <Images size={20} />
+            Library
+          </button>
+          <button
+            className={!settingsOpen && page === "people" ? "active" : ""}
+            onClick={() => {
+              setSettingsOpen(false); setPage("people");
+              returnToPeople();
+            }}
+          >
+            <Users size={20} />
+            People<span className="nav-count">{people.length}</span>
+          </button>
+          <button
+            onClick={() => {
+              setSettingsOpen(false); setPage("library");
+              setSheet(true);
+            }}
+          >
+            <Layers size={20} />
+            Sources & albums
+          </button>
+          <button aria-label="Library tools" className={settingsOpen ? "active" : ""} onClick={()=>{window.location.hash="tools/databases";setSettingsOpen(true);}}><HardDrive size={20}/>Library tools{attention}</button>
+        </nav>
+        <div className="sidebar-bottom">
+          <HardDrive size={18} />
+          <div>
+            Stored on your SSD<small>Local family library</small>
+          </div>
+        </div>
+      </aside>
+      <main className={!settingsOpen && page === "library" ? "library-workspace-page" : ""} inert={sheet}>
+        <header className="topbar library-topbar">
+          <div className={"library-heading"+(page==="library"&&!settingsOpen&&searchFilterActive?" has-search-filter":"")}>
+            <h1>{settingsOpen ? "Library tools" : page === "library" ? "Library" : "People"}</h1>
+            {page==="library"&&!settingsOpen&&searchFilterActive&&<button className="library-filter-indicator" aria-label="Clear active search" title={"Filtered view"+(expression?": "+expression:"")+". Click to clear search."} onClick={clearActiveSearch}><Search size={13}/><span>Filtered</span><X size={13}/></button>}
+          </div>
+          <div className="library-topbar-actions">
+            {page==="library"&&!settingsOpen&&<button className="outline library-options-toggle" aria-label="View options" aria-expanded={displayOptionsOpen} aria-controls="library-view-options" onClick={()=>setDisplayOptionsOpen(v=>!v)}><SlidersHorizontal size={18}/></button>}
+            <button className="outline library-search-toggle" aria-label="Search library" aria-expanded={searchOpen && page==='library' && !settingsOpen} aria-controls="library-search-tools" onClick={()=>{setSettingsOpen(false);setPage('library');setSearchOpen(true);requestAnimationFrame(()=>{document.querySelector('main.library-workspace-page')?.scrollTo({top:0});document.querySelector<HTMLInputElement>('[aria-label="Search photos"]')?.focus();});}}><Search size={18}/><span>Search</span></button>
+            <button className="outline people-tools-toggle" aria-label="People maintenance" title={peopleAttention?"People maintenance needs attention":"People maintenance"} onClick={openPeopleTools}><Users size={18}/>{attention}</button>
+            <LibraryNotifications profileId={profile.id} noticeKey={peopleOperation ? JSON.stringify([peopleOperation.id,peopleOperation.state,peopleOperation.error,peopleOperation.result]) : approvingAll ? 'approving' : ''} title={peopleOperation?.phase || 'Saving assignments'}>
+              <PeopleProgress persistent onReview={()=>{setSettingsOpen(true);window.location.hash="tools/people";setPage("people");setGroup(null);setReviewPerson("");setReviewFocus(null);setReviewOptionsOpen(true);requestAnimationFrame(()=>{const target=document.querySelector<HTMLElement>(peopleOperation?.kind==='calibrate'?'.matching-quality':'.people-review-tools');if(target instanceof HTMLDetailsElement)target.open=true;target?.scrollIntoView({block:'start'});});}} operation={peopleOperation} approving={approvingAll} approvalCount={approvalCount} connection={peopleProgressError} onRetry={()=>reevaluatePeople()} retryDisabled={busy||!!savingReviews.length} onCancel={async()=>{if(peopleOperation)try{await api("/people/operations/"+peopleOperation.id+"/cancel",{});}catch(e){setError(String(e));throw e;}}}/>
+            </LibraryNotifications>
+            <details className="library-appearance"><summary aria-label="Appearance" title="Appearance">⋯</summary>          <div className="appearance-panel"><button className="appearance-close" aria-label="Close menu" onClick={e=>{const menu=e.currentTarget.closest('details');if(menu){menu.open=false;menu.querySelector<HTMLElement>('summary')?.focus();}}}>Close <X size={14}/></button><label className="theme-picker">Theme <select aria-label="Color theme" value={theme} onChange={(e) => setTheme(e.target.value)}><option value="sage">Sage</option><option value="ocean">Ocean</option><option value="plum">Plum</option><option value="black">Black</option><option value="dark">Dark</option></select></label>{page==="library"&&!settingsOpen&&<button onClick={e=>{setSelectingMedia(true);const menu=e.currentTarget.closest('details');if(menu)menu.open=false;}}>Select photos &amp; videos</button>}</div></details>
+            <button className="outline profile-switch" onClick={onSwitchProfile} title="Account settings">{profile.name}<span className="account-label"> · Account</span></button>
+          </div>
+          {page==="library"&&!settingsOpen&&<div id="library-view-options" className={"library-filter-slot"+(displayOptionsOpen?" options-open":"")} ref={setHeaderControls}/>}
+        </header>
+        {profileSaveError&&<div className="profile-save-error" role="alert">{profileSaveError}</div>}
+        {liveSync && (liveSync.running || ["paused","cancelled","interrupted"].includes(liveSync.runs[0]?.state)) && <section className="live-sync" aria-label="Library sync"><strong>Sync · {liveSync.runs[0]?.state}</strong><span>{liveSync.runs[0]?.progress.phase} · {(status?.counts.ready||0).toLocaleString()} viewable</span><button onClick={()=>{window.location.hash="tools/sync";setSettingsOpen(true);}}>Sync controls</button>{liveSync.runs[0]?.progress.live_added!==undefined&&<span>{liveSync.runs[0].progress.live_added!.toLocaleString()} new items · {(liveSync.runs[0].progress.previews_published||0).toLocaleString()} previews processed</span>}{liveSync.runs[0]?.progress.database_id&&databaseChoices.some(([id])=>id===liveSync.runs[0].progress.database_id)&&<button onClick={()=>{reset();setDatabaseScope(liveSync.runs[0].progress.database_id!);setSourceScope("");setAlbumScope("");setPage("library");setSettingsOpen(false);}}>View importing Database</button>}<small>{liveSync.running?"New previews appear while scanning. Face recognition follows preview publishing.":"Progress is saved. Resume from Library tools when ready."}</small></section>}
+        {!liveSync?.runs.length && status?.scan && (
+          <section className="scan-progress" aria-label="Full library scan">
+            <strong>
+              {status.scan.stale
+                ? "Scan heartbeat stopped"
+                : status.scan.state === "running"
+                  ? "Full library scan running"
+                  : status.scan.state === "completed"
+                    ? "Full library scan complete"
+                    : status.scan.state === "completed_with_issues"
+                      ? "Full scan finished with issues"
+                      : `Full scan ${status.scan.state}`}
+            </strong>
+            <p>
+              {(status.counts.ready || 0).toLocaleString()} of{" "}
+              {status.total.toLocaleString()} files browsable ·{" "}
+              {status.scan.phase}
+              {status.scan.run_errors
+                ? ` · ${status.scan.run_errors} processing errors`
+                : ""}
+              {status.scan.changed_sources
+                ? ` · ${status.scan.changed_sources} changed sources need review`
+                : ""}
+              {status.scan.discovery_errors
+                ? ` · ${status.scan.discovery_errors} folders/files could not be read`
+                : ""}
+            </p>
+            {status.scan.state === "running" && (
+              <>
+                <progress
+                  aria-label="Files processed in this scan"
+                  max={status.scan.to_process || 1}
+                  value={status.scan.processed || 0}
+                />
+                <p className="small-note">
+                  {status.scan.remaining_seconds
+                    ? `Estimated time remaining: ${Math.ceil(status.scan.remaining_seconds / 3600)} hours. `
+                    : ""}
+                  New results appear as files finish. Existing names and
+                  corrections are preserved.
+                </p>
+                <button
+                  onClick={async () => {
+                    try {
+                      await api("/scan/pause", {});
+                      setNotice(
+                        "Pause requested. Current files will finish first.",
+                      );
+                    } catch (e) {
+                      setError(String(e));
+                    }
+                  }}
+                >
+                  Pause scan
+                </button>
+              </>
+            )}
+            {status.scan.error && <p role="alert">{status.scan.error}</p>}
+          </section>
+        )}
+
+        {connectionError && <div role="alert" className="error">{connectionError} Retrying automatically…</div>}
+        {error && (
+          <div role="alert" className="error">
+            {error}
+            <button aria-label="Dismiss error" onClick={() => setError("")}>
+              <X size={18} />
+            </button>
+          </div>
+        )}
+        {settingsOpen ? <SyncSettings peopleMaintenance={peopleMaintenance} peopleAttention={peopleAttention} onBrowseAlbum={(databaseId,sourceId,albumId)=>{setDatabaseScope(databaseId);setIncludeChildren(false);setSourceScope(sourceId);setAlbums([]);setAlbumScope(albumId);setSettingsOpen(false);setPage("library");setResultsLoading(true);}} onPeopleChanged={()=>setRevision(v=>v+1)} onClose={() => {setSettingsOpen(false);setPage("library");}} hideFormatDuplicates={hideFormatDuplicates} onHideFormatDuplicates={setHideFormatDuplicates} /> : page === "library" ? (
+          <>
+            {(albumScope||sourceScope||databaseScope)&&<p className="library-album-scope">Browsing {albumScope?(sources.find(s=>s.album_id===albumScope)?.album||'selected album'):'selected source'} <button onClick={()=>{setAlbumScope('');setSourceScope('');setDatabaseScope('');setIncludeChildren(false);setScope(phoneNames);setAlbums([]);}}>Show all my sources</button></p>}
+            <UnifiedSearch onSearchComplete={()=>{setSearchOpen(false);setDisplayOptionsOpen(false);requestAnimationFrame(()=>{document.querySelector('main.library-workspace-page')?.scrollTo({top:0});const gallery=document.querySelector<HTMLElement>('.unified-gallery-scroll');gallery?.focus({preventScroll:true});});}} searchOpen={searchOpen} onCloseSearch={()=>{setSearchOpen(false);document.querySelector<HTMLButtonElement>('[aria-label="Search library"]')?.focus();}} sourceSelection={scope} onSourceChange={(selected)=>{setDatabaseScope("");setSourceScope("");setIncludeChildren(false);setAlbumScope("");setAlbums([]);setResultsLoading(true);setScope(selected);}} resultsLoading={resultsLoading} people={people} sources={sources} expression={expression} query={query().toString()} onApply={(value) => {
+              void recordProfileSearch(profile.id,value,scope).catch(()=>setProfileSaveError("Your search ran, but its history could not be saved."));
+              setResultsLoading(true);
+              setAlbums([]);setAlbumScope("");setGeo(emptyGeo);setQ("");setPeopleFilter([]);setStart("");setEnd("");setKind("");setOrientation("");setExpression(value);
+            }}>
+              {(mediaControl,sourceControl)=><>
+              {headerControls&&createPortal(<div className="gallery-controls" aria-label="Gallery display controls">
+              <div className="library-options-heading"><strong>View options</strong><button onClick={()=>{setDisplayOptionsOpen(false);document.querySelector<HTMLButtonElement>('.library-options-toggle')?.focus();}}>Done</button></div>
+              {sourceControl}
+              <select aria-label="Timeline grouping" value={view} onChange={e=>setView(e.target.value)}>{['years','months','days','all'].map(v=><option key={v} value={v}>{v==='all'?'All photos':v[0].toUpperCase()+v.slice(1)}</option>)}</select>
+              {mediaControl}
+              <details className="library-sort-options"><summary>Sort options</summary><div className="library-sort-menu"><select className="gallery-media-filter gallery-sort-basis" aria-label="Gallery sort basis" title="Sort by" value={sortBy} onChange={e=>setSortBy(e.target.value)}><option value="capture">Sort by: Capture date</option><option value="file">Sort by: File date</option></select>
+              <label className="sort-control">
+                <span className="sort-label">Date order</span>
+                <select
+                  aria-label="Result date order"
+                  value={order}
+                  onChange={(e) => setOrder(e.target.value)}
+                >
+                  <option value="desc">Newest first</option>
+                  <option value="asc">Oldest first</option>
+                </select>
+              </label></div></details>
+                <span className="result-count" aria-live="polite">
+                  {total.toLocaleString()} moments
+                </span>
+              </div>,headerControls)}
+              <MetadataTools query={query().toString()} selected={selectedMedia} selecting={selectingMedia} onSelecting={value=>{setSelectingMedia(value);if(!value)setSelectedMedia([]);}} onSelectLoaded={()=>setSelectedMedia(items.map(m=>m.id))} onClear={()=>setSelectedMedia([])} count={total} revision={revision} onSaved={metadataSaved}/>
+              {sortBy==='file'&&<p className="metadata-note">Sorting by filesystem timestamp. Timeline groups still describe capture dates; missing capture dates stay unknown.</p>}
+              {loading && !items.length ? (
+                <div className="gallery-loading-space" aria-hidden="true"/>
+              ) : !items.length ? (
+                <div className="empty">
+                  <Images size={36} />
+                  <h2>No moments in this view</h2>
+                  <p>
+                    {scope.length
+                      ? "Try another source, album, or date."
+                      : "Choose at least one source to browse."}
+                  </p>
+                  <button className="primary" onClick={reset}>
+                    Show all files
+                  </button>
+                </div>
+              ) : (
+                Object.entries(groups)
+                  .sort(([a], [b]) =>
+                    a === "Unknown date"
+                      ? 1
+                      : b === "Unknown date"
+                        ? -1
+                        : order === "asc"
+                          ? a.localeCompare(b)
+                          : b.localeCompare(a),
+                  )
+                  .map(([day, photos]) => (
+                    <section className="day-group" key={day}>
+                      <div className="day-heading">
+                        <h2>
+                          {day === "Unknown date" ||
+                          day === "All moments" ||
+                          view === "years" || day.length<10
+                            ? day
+                            : new Date(
+                                day +
+                                  (view === "months" ? "-01" : "") +
+                                  "T12:00:00",
+                              ).toLocaleDateString(
+                                undefined,
+                                view === "months"
+                                  ? { month: "long", year: "numeric" }
+                                  : {
+                                      weekday: "long",
+                                      day: "numeric",
+                                      month: "long",
+                                      year: "numeric",
+                                    },
+                              )}
+                        </h2>
+                        <span>{photos.length} shown</span>
+                      </div>
+                      <BufferedGallery items={photos} onOpen={resultsLoading ? ()=>{} : open} selecting={selectingMedia} selected={selectedMedia} onSelect={id=>setSelectedMedia(old=>old.includes(id)?old.filter(i=>i!==id):[...old,id])} />
+                    </section>
+                  ))
+              )}
+              {items.length < total && (
+                <div className="load-more" ref={loadSentinel} role="status">
+                  {moreError ? <><span>{moreError}</span><button onClick={() => void loadMore()}>Retry loading</button></> : <span>{loading ? "Loading more photos…" : "Scroll to explore more"} · {items.length.toLocaleString()} of {total.toLocaleString()}</span>}
+                </div>
+              )}
+              <footer className="library-footer">
+                <Info size={15} />
+                <span>
+                  Face groups need review. Scene, dog and portrait-type search
+                  are the next milestone.
+                </span>
+                <span>{status?.counts.ready || 0} indexed</span>
+              </footer>
+              </>}
+            </UnifiedSearch>
+          </>
+        ) : (
+          <>
+            <div className="page-heading">
+              <div>
+                <span className="eyebrow">FAMILIAR FACES</span>
+                <h1>
+                  {group === -1
+                    ? "Unknown People"
+                    : group === null
+                      ? "People"
+                      : activeGroup?.name || "An unnamed person"}
+                </h1>
+                <p>Help your library put a name to a face.</p>
+              </div>
+              <button
+                className="outline"
+                disabled={busy || peopleWorking || approvingAll || savingReviews.length > 0}
+                onClick={() => perform("/undo", {})}
+              >
+                <Undo2 size={17} />
+                Undo last change
+              </button>
+            </div>
+            {group === null ? (
+              <>
                 <PeopleBrowse browse={peopleBrowse}/>
                 {peopleBrowse.preferences.unknown&&!!unnamedGroups.length&&<section
                   className="group-selection-bar"
@@ -1799,7 +1823,7 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
           <Layers />
           Albums
         </button>
-        <button className={settingsOpen ? "active" : ""} aria-label="Library tools" onClick={()=>{window.location.hash="tools/databases";setSettingsOpen(true);}}><HardDrive/>Tools</button>
+        <button className={settingsOpen ? "active" : ""} aria-label="Library tools" onClick={()=>{window.location.hash="tools/databases";setSettingsOpen(true);}}><HardDrive/>Tools{attention}</button>
       </nav>
       {sheet && (
         <div className="overlay" onClick={() => setSheet(false)}>
@@ -1981,7 +2005,7 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
         </div>
       )}
       {detail && createPortal(
-        <div className={"overlay viewer-overlay"+(expanded?" viewer-expanded-overlay":"")} onClick={closeViewer}>
+        <div className={"overlay viewer-overlay"+(expanded?" viewer-expanded-overlay":"")+(viewerClosing?" viewer-dismissing":"")+(viewerDrag<0&&!viewerClosing?" viewer-dismiss-dragging":"")} style={{"--viewer-dismiss-y":viewerDrag+"px","--viewer-dismiss-scale":1-Math.min(.16,Math.abs(viewerDrag)/Math.max(1,window.innerHeight)*.35)} as React.CSSProperties} onClick={()=>closeViewer()}>
           <section
             role="dialog"
             aria-modal="true"
@@ -1994,7 +2018,7 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
             {editingFace&&<button
               className="viewer-close"
               aria-label="Close viewer"
-              onClick={closeViewer}
+              onClick={()=>closeViewer()}
             >
               <X />
             </button>}
@@ -2014,7 +2038,7 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
                     setRevision((v) => v + 1);
                   }}
                 />
-              ) : <MediaViewerStage key={detail.id} id={detail.id} name={detail.name} width={detail.width||1} height={detail.height||1} imageUrl={thumb(detail.id,"large")} direction={slideDirection} departingImage={departingImage} onClose={closeViewer} onEditFaces={()=>{collapseViewer();setEditingFace(true);}} videoUrl={preview} kind={detail.kind} expanded={expanded} onToggleExpanded={toggleExpanded} {...neighbors} busy={viewerBusy} onNavigate={open}/>}
+              ) : <MediaViewerStage key={detail.id} id={detail.id} name={detail.name} width={detail.width||1} height={detail.height||1} imageUrl={thumb(detail.id,"large")} direction={slideDirection} departingImage={departingImage} onClose={closeViewer} onDismissProgress={setViewerDrag} onEditFaces={()=>{collapseViewer();setEditingFace(true);}} videoUrl={preview} kind={detail.kind} expanded={expanded} onToggleExpanded={toggleExpanded} {...neighbors} busy={viewerBusy} closing={viewerClosing} onNavigate={open}/>}
             </div>
             <MediaInfoSheet key={detail.id}>
               <span className="eyebrow">

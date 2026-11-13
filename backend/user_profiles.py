@@ -17,6 +17,8 @@ def migrate(c):
     CREATE TABLE IF NOT EXISTS user_profiles(
       id TEXT PRIMARY KEY, name TEXT NOT NULL, theme TEXT NOT NULL DEFAULT 'sage',
       source_ids TEXT, source_names TEXT, last_login_at TEXT, created_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS user_people_preferences(
+      profile_id TEXT PRIMARY KEY REFERENCES user_profiles(id), preferences TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS user_activity(
       id INTEGER PRIMARY KEY, profile_id TEXT NOT NULL REFERENCES user_profiles(id),
       kind TEXT NOT NULL, occurred_at TEXT NOT NULL, details TEXT NOT NULL);
@@ -38,6 +40,8 @@ def profile(c, identity):
     result = dict(row)
     for key in ('source_ids', 'source_names'):
         result[key] = json.loads(result[key]) if result[key] is not None else None
+    saved = c.execute('SELECT preferences FROM user_people_preferences WHERE profile_id=?', (identity,)).fetchone()
+    result['people_browse'] = json.loads(saved['preferences']) if saved else None
     return result
 
 @router.get('')
@@ -64,6 +68,27 @@ def save_preferences(identity: str, body: Preferences):
         profile(c, identity)
         c.execute('UPDATE user_profiles SET theme=?,source_ids=?,source_names=? WHERE id=?',
                   (body.theme, json.dumps(list(dict.fromkeys(body.source_ids))), json.dumps(list(dict.fromkeys(body.source_names))), identity))
+        return profile(c, identity)
+
+class PeopleDirections(BaseModel):
+    name: Literal['asc','desc'] = 'asc'
+    count: Literal['asc','desc'] = 'desc'
+
+class PeoplePreferences(BaseModel):
+    known: bool = True
+    unknown: bool = True
+    sort: Literal['name','count'] = 'count'
+    directions: PeopleDirections = Field(default_factory=PeopleDirections)
+
+@router.put('/{identity}/people-preferences')
+def save_people_preferences(identity: str, body: PeoplePreferences):
+    if not body.known and not body.unknown:
+        raise HTTPException(422, 'Show at least one group of people')
+    with db() as c:
+        profile(c, identity)
+        c.execute('INSERT INTO user_people_preferences(profile_id,preferences) VALUES(?,?) '
+                  'ON CONFLICT(profile_id) DO UPDATE SET preferences=excluded.preferences',
+                  (identity, json.dumps(body.model_dump())))
         return profile(c, identity)
 
 class SearchEvent(BaseModel):

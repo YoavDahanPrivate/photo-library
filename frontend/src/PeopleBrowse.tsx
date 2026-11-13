@@ -1,17 +1,16 @@
-import React,{useEffect,useMemo,useState} from 'react';
+import {savePeoplePreferences,type Profile,type PeoplePreferences} from "./UserProfiles";
+import React,{useEffect,useMemo,useRef,useState} from 'react';
 import {ArrowDown,ArrowUp,Users} from 'lucide-react';
 type Person={id:number;name:string|null;count:number;cover:string};
 type Sort='name'|'count';
 type Direction='asc'|'desc';
-type Preferences={known:boolean;unknown:boolean;sort:Sort;directions:Record<Sort,Direction>};
-const storageKey='dahan.peopleBrowse.v1';
-const defaults=():Preferences=>({known:true,unknown:true,sort:'name',directions:{name:'asc',count:'desc'}});
+type Preferences=PeoplePreferences;
+const defaults=():Preferences=>({known:true,unknown:true,sort:'count',directions:{name:'asc',count:'desc'}});
 export const isKnownPerson=(person:Person)=>person.id>0&&!!person.name?.trim();
 export const personLabel=(person:Person)=>person.name?.trim()||'Unnamed person '+person.id;
-function readPreferences():Preferences{
+function readPreferences(saved:Profile["people_browse"]):Preferences{
  const result=defaults();
  try{
-  const saved=JSON.parse(localStorage.getItem(storageKey)||'null');
   if(!saved||typeof saved!=='object')return result;
   if(typeof saved.known==='boolean')result.known=saved.known;
   if(typeof saved.unknown==='boolean')result.unknown=saved.unknown;
@@ -21,9 +20,17 @@ function readPreferences():Preferences{
  }catch{/* Defaults also work when browser storage is unavailable. */}
  return result;
 }
-export function usePeopleBrowse(people:Person[]){
- const [preferences,setPreferences]=useState(readPreferences);
- useEffect(()=>{try{localStorage.setItem(storageKey,JSON.stringify(preferences));}catch{}},[preferences]);
+export function usePeopleBrowse(people:Person[],profile:Profile){
+ const [preferences,setPreferences]=useState(()=>readPreferences(profile.people_browse));
+ const [saveError,setSaveError]=useState("");
+ const saved=useRef(JSON.stringify(preferences));
+ useEffect(()=>{
+  const key=JSON.stringify(preferences);if(key===saved.current)return;
+  saved.current=key;
+  let active=true;
+  void savePeoplePreferences(profile.id,preferences).then(()=>{if(active)setSaveError("");}).catch(()=>{if(active){saved.current="";setSaveError("Your People display choice could not be saved. Change it again to retry.");}});
+  return()=>{active=false;};
+ },[preferences,profile.id]);
  const visible=useMemo(()=>{
   const collator=new Intl.Collator(undefined,{sensitivity:'base',numeric:true});
   const direction=preferences.directions[preferences.sort]==='asc'?1:-1;
@@ -38,7 +45,7 @@ export function usePeopleBrowse(people:Person[]){
   if(previous[kind]&&!previous[kind==='known'?'unknown':'known'])return previous;
   return {...previous,[kind]:!previous[kind]};
  });
- return {preferences,visible,knownCount,unknownCount:people.length-knownCount,toggle,
+ return {preferences,saveError,visible,knownCount,unknownCount:people.length-knownCount,toggle,
   sort:(sort:Sort)=>setPreferences(previous=>({...previous,sort})),
   direction:(direction:Direction)=>setPreferences(previous=>({...previous,directions:{...previous.directions,[previous.sort]:direction}})),
  };
@@ -58,6 +65,7 @@ export default function PeopleBrowse({browse}:{browse:ReturnType<typeof usePeopl
     <button aria-label="Descending people order" aria-pressed={direction==='desc'} onClick={()=>browse.direction('desc')}><ArrowDown size={16} aria-hidden="true"/>{preferences.sort==='name'?'Z–A':'Largest first'}</button>
    </div>
   </div>
-  <p>Enable both groups to show everyone. Face count is the number of faces assigned to each person or group. Choices are remembered on this browser.</p>
+  <p>Enable both groups to show everyone. Face count is the number of faces assigned to each person or group. Choices are saved to your account across devices.</p>
+  {browse.saveError&&<p role="alert">{browse.saveError}</p>}
  </section>;
 }

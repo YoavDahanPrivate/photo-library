@@ -1,7 +1,8 @@
 import {useEffect,useRef,useState,type ReactNode} from 'react';
 import {passkey,supported} from './Passkeys';
 import './profiles.css';
-export type Profile={id:string;name:string;theme:string;source_ids:string[]|null;source_names:string[]|null;last_login_at:string|null;must_change?:boolean;tv_guest?:boolean};
+export type PeoplePreferences={known:boolean;unknown:boolean;sort:"name"|"count";directions:Record<"name"|"count","asc"|"desc">};
+export type Profile={id:string;name:string;theme:string;source_ids:string[]|null;source_names:string[]|null;last_login_at:string|null;people_browse?:PeoplePreferences|null;must_change?:boolean;tv_guest?:boolean};
 export function currentProfileId(){return localStorage.getItem('dahan.profile')||'';}
 async function call(path:string,method='GET',body?:unknown){
  const r=await fetch('/api'+path,{method,headers:{'Content-Type':'application/json'},...(body!==undefined?{body:JSON.stringify(body)}:{})});const data=await r.json();
@@ -9,6 +10,7 @@ async function call(path:string,method='GET',body?:unknown){
 }
 let preferenceQueue:Promise<unknown>=Promise.resolve();
 export function saveProfilePreferences(id:string,theme:string,source_ids:string[],source_names:string[]){const task=preferenceQueue.catch(()=>{}).then(()=>call('/profiles/'+id+'/preferences','PUT',{theme,source_ids,source_names}));preferenceQueue=task;return task;}
+export function savePeoplePreferences(id:string,preferences:PeoplePreferences){const task=preferenceQueue.catch(()=>{}).then(()=>call('/profiles/'+id+'/people-preferences','PUT',preferences));preferenceQueue=task;return task;}
 export function recordProfileSearch(id:string,expression:string,source_names:string[]){return call('/profiles/'+id+'/searches','POST',{expression,source_names});}
 export function ProfileShell({children}:{children:(profile:Profile,account:()=>void)=>ReactNode}){
  const [active,setActive]=useState<Profile|null>(null),[ready,setReady]=useState(false),[settings,setSettings]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');

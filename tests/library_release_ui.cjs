@@ -80,7 +80,15 @@ await page.getByRole('button',{name:'Cancel selection',exact:true}).click();
 
  if(viewport.width<=760){
  const card=page.locator('.media-tile').first();const icon=await card.locator('.tile-info-toggle').boundingBox();assert(icon.width<=24&&icon.height<=24,'Compact info icon');const outer=await card.boundingBox(),photo=await card.locator('.photo-card').boundingBox();assert(Math.abs(outer.height-photo.height)<2,'No mobile caption row');
- await card.locator('.tile-info-toggle').tap();assert(await card.locator('.tile-info-details').isVisible());assert.equal(await page.locator('.viewer-overlay').count(),0);await card.locator('.tile-info-toggle').tap();
+ await card.locator('.tile-info-toggle').tap();assert(await card.locator('.tile-info-details').isVisible());assert.equal(await page.locator('.viewer-overlay').count(),0);
+ await card.getByRole('button',{name:/Close photo information/}).tap();assert.equal(await card.locator('.tile-info-details').count(),0);
+ await card.locator('.tile-info-toggle').tap();
+ await page.screenshot({path:path.join(artifactDir,'mobile-info-close.png')});
+ await page.evaluate(()=>document.querySelector('main.library-workspace-page').dispatchEvent(new Event('scroll')));await page.clock.runFor(30);assert.equal(await card.locator('.tile-info-details').count(),0,'Scroll dismisses information');
+ await card.locator('.tile-info-toggle').tap();await page.getByRole('button',{name:'Search library'}).tap();assert.equal(await card.locator('.tile-info-details').count(),0,'Other controls dismiss information');await page.getByRole('button',{name:'Close search',exact:true}).tap();
+ await card.locator('.tile-info-toggle').tap();await card.getByRole('button',{name:'Open details',exact:true}).tap();await page.locator('.viewer-overlay').waitFor();assert.equal(await card.locator('.tile-info-details').count(),0,'Opening details dismisses information');await page.getByRole('button',{name:'Close viewer',exact:true}).tap();await page.locator('.viewer-overlay').waitFor({state:'hidden'});
+ await card.locator('.tile-info-toggle').tap();await page.keyboard.press('Escape');assert.equal(await card.locator('.tile-info-details').count(),0);
+ console.log('PASS mobile thumbnail information close, scroll, outside interaction, preview and Escape dismissal');
  await page.screenshot({path:path.join(artifactDir,'compact-mobile-thumbnails.png')});
  await card.locator('.photo-card').tap();
  }else await page.locator('.photo-card').first().click();
@@ -103,7 +111,7 @@ await page.getByRole('button',{name:'Cancel selection',exact:true}).click();
  const mediaBox=await page.locator('.viewer-media').boundingBox();assert(mediaBox.height>viewport.height*.85,'Preview should fill mobile screen');
  assert.equal(await page.locator('.media-info-content').isVisible(),false);
  await page.screenshot({path:path.join(artifactDir,'mobile-preview.png')});
- let grip=await page.locator('.media-info-handle').boundingBox();
+ let grip=await page.locator('.media-info-handle').boundingBox();assert(grip.height>=48,'Drag handle has a generous touch target');assert(viewport.height-(grip.y+grip.height/2)>=36,'Handle center clears the bottom system gesture zone');
  await page.mouse.move(grip.x+grip.width/2,grip.y+28);await page.mouse.down();await page.mouse.move(grip.x+grip.width/2,grip.y-240,{steps:12});await page.mouse.up();
  assert.equal(await page.locator('.media-info-handle').getAttribute('aria-expanded'),'true');assert(await page.locator('.media-info-content').isVisible());
  await page.screenshot({path:path.join(artifactDir,'mobile-information-sheet.png')});

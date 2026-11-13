@@ -1,4 +1,4 @@
-import {Info} from "lucide-react";
+import {Info,X} from "lucide-react";
 import {captureLabel,type MetadataInfo} from "./MetadataTools";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 const visibilityCallbacks = new Map<Element, (visible:boolean) => void>();
@@ -42,6 +42,28 @@ export default function MediaCard({
   }, []);
   useEffect(() => {if (!nearby) stop();}, [nearby]);
   const [showInfo,setShowInfo]=useState(false);
+  const info = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!showInfo) return;
+    const dismiss = () => setShowInfo(false);
+    const outside = (event:PointerEvent) => {
+      if (event.target instanceof Node && !info.current?.contains(event.target)) dismiss();
+    };
+    const scroll = (event:Event) => {
+      if (event.target instanceof Node && info.current?.contains(event.target)) return;
+      dismiss();
+    };
+    const key = (event:KeyboardEvent) => { if (event.key === "Escape") dismiss(); };
+    document.addEventListener("pointerdown", outside, true);
+    document.addEventListener("scroll", scroll, {capture:true,passive:true});
+    document.addEventListener("keydown", key);
+    return () => {
+      document.removeEventListener("pointerdown", outside, true);
+      document.removeEventListener("scroll", scroll, true);
+      document.removeEventListener("keydown", key);
+    };
+  }, [showInfo]);
+  const open = () => {setShowInfo(false);onOpen();};
   const [active, setActive] = useState(false),
     [url, setUrl] = useState(""),
     [error, setError] = useState(""),
@@ -86,6 +108,7 @@ export default function MediaCard({
     <div
       ref={tile}
       className="media-tile"
+      data-media-id={m.id}
       onPointerEnter={(e) => {
         if (m.kind === "video" && e.pointerType === "mouse")
           timer.current = setTimeout(start, 650);
@@ -98,7 +121,7 @@ export default function MediaCard({
       <button
         className="photo-card"
         style={{aspectRatio: `${m.width || 4} / ${m.height || 3}`}}
-        onClick={onOpen}
+        onClick={open}
         aria-label={`Open ${m.name} from ${m.phone}`}
       >
         {nearby && <picture>
@@ -144,7 +167,7 @@ export default function MediaCard({
           ) : null}
         </span>
       </button>
-      <div className="mobile-tile-info"><button className="tile-info-toggle" aria-label={"Photo information for "+m.name} aria-expanded={showInfo} onClick={()=>setShowInfo(v=>!v)}><Info size={13} strokeWidth={1.7}/></button>{showInfo&&<div className="tile-info-details"><strong>{m.name}</strong><span>{captureLabel(m)}</span><span>{m.location_label||[m.city,m.country].filter(Boolean).join(", ")||"Location unknown"}</span><span>{m.people_names?.join(", ")||"No named faces"}</span><button onClick={onOpen}>Open details</button></div>}</div>
+      <div className="mobile-tile-info" ref={info}><button className="tile-info-toggle" aria-label={"Photo information for "+m.name} aria-expanded={showInfo} onClick={()=>setShowInfo(v=>!v)}><Info size={13} strokeWidth={1.7}/></button>{showInfo&&<div className="tile-info-details"><div className="tile-info-heading"><strong>{m.name}</strong><button className="tile-info-close" aria-label={"Close photo information for "+m.name} onClick={()=>setShowInfo(false)}><X size={14}/></button></div><span>{captureLabel(m)}</span><span>{m.location_label||[m.city,m.country].filter(Boolean).join(", ")||"Location unknown"}</span><span>{m.people_names?.join(", ")||"No named faces"}</span><button onClick={open}>Open details</button></div>}</div>
       {m.kind === "video" && (
         <div className="video-preview-action">
           <button

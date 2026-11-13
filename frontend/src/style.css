@@ -2511,7 +2511,7 @@ main.library-workspace-page {height:100dvh;display:flex;flex-direction:column;ov
 
 /* Quiet image overlays: controls never take space away from the media. */
 .viewer-media:has(.gentle-viewer){padding:0}.gentle-viewer{isolation:isolate;overflow:hidden;background:#101815}
-.gentle-viewer .media-viewport{width:100%;height:100%;flex:1;touch-action:pan-y}.gentle-viewer .media-viewport.pannable,.gentle-viewer .expanded-gestures{touch-action:none}
+.gentle-viewer .media-viewport{width:100%;height:100%;flex:1;touch-action:none}.gentle-viewer .media-viewport.pannable,.gentle-viewer .expanded-gestures{touch-action:none}
 .incoming-frame,.departing-frame{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}.departing-frame{z-index:1}.viewer-media .departing-frame img{width:100%;height:100%;object-fit:contain;max-width:100%;max-height:100%}
 .incoming-frame.motion-next{animation:media-enter-next .26s ease-out both}.incoming-frame.motion-previous{animation:media-enter-previous .26s ease-out both}.departing-frame.motion-next{animation:media-leave-next .26s ease-out both}.departing-frame.motion-previous{animation:media-leave-previous .26s ease-out both}
 @keyframes media-enter-next{from{opacity:0;transform:translateX(7%)}to{opacity:1;transform:none}}@keyframes media-enter-previous{from{opacity:0;transform:translateX(-7%)}to{opacity:1;transform:none}}@keyframes media-leave-next{to{opacity:0;transform:translateX(-7%)}}@keyframes media-leave-previous{to{opacity:0;transform:translateX(7%)}}
@@ -2595,7 +2595,7 @@ main.library-workspace-page {height:100dvh;display:flex;flex-direction:column;ov
 :root{--logo-deep:#28513d;--logo-mid:#71a892;--logo-light:#a3b45b}
 :root[data-theme="ocean"]{--logo-deep:#245d85;--logo-mid:#43a6b1;--logo-light:#73b9dc}
 :root[data-theme="plum"]{--logo-deep:#754982;--logo-mid:#b879a0;--logo-light:#a492ce}
-.photo-brand-mark{background:linear-gradient(135deg,var(--logo-deep),var(--logo-mid) 55%,var(--logo-light));-webkit-mask:url('/brand/dahan-photo-mark-v2.png') center/contain no-repeat;mask:url('/brand/dahan-photo-mark-v2.png') center/contain no-repeat;flex-shrink:0}
+.photo-brand-mark{background:conic-gradient(from -20deg,#ffb52d,#f46b45,#e74785,#a561d8,#5c80df,#4abbd1,#54ba8c,#b5cc51,#ffb52d);-webkit-mask:url('/brand/dahan-photo-mark-v2.png') center/contain no-repeat;mask:url('/brand/dahan-photo-mark-v2.png') center/contain no-repeat;flex-shrink:0}
 .brand-logo.photo-brand-mark{display:block;width:48px;height:48px}.brand{gap:12px}.mobile-brand-logo.photo-brand-mark{width:30px;height:30px}
 @media(forced-colors:active){.photo-brand-mark{background:CanvasText}}
 
@@ -3105,18 +3105,18 @@ body:has(.viewer-overlay) .library-topbar{visibility:hidden;pointer-events:none}
  .mobile-tile-info .tile-info-toggle[aria-expanded=true],.mobile-tile-info .tile-info-toggle:focus-visible{background:#10181550;color:#fff}
 }
 
-/* The resting information sheet is a slim, quiet grip below the image. */
+/* Keep a quiet grip with a generous target above the system gesture area. */
 @media(max-width:760px), (hover:none) and (pointer:coarse){
- .viewer-overlay .viewer{--sheet-peek:32px}
- .viewer-overlay .viewer .viewer-media,.viewer-overlay .viewer:not(.viewer-expanded) .viewer-media:has(.gentle-viewer){height:calc(100dvh - var(--sheet-peek) - env(safe-area-inset-bottom))}
- .viewer-overlay .viewer .media-info-sheet{border:0;border-radius:12px 12px 0 0;box-shadow:none;transform:translateY(calc(100% - var(--sheet-peek) - env(safe-area-inset-bottom)))}
+ .viewer-overlay .viewer{--sheet-peek:48px;--sheet-bottom-space:max(12px,env(safe-area-inset-bottom));height:var(--library-viewport-height,100dvh);max-height:var(--library-viewport-height,100dvh)}
+ .viewer-overlay .viewer .viewer-media,.viewer-overlay .viewer:not(.viewer-expanded) .viewer-media:has(.gentle-viewer){height:calc(var(--library-viewport-height,100dvh) - var(--sheet-peek) - var(--sheet-bottom-space))}
+ .viewer-overlay .viewer .media-info-sheet{border:0;border-radius:12px 12px 0 0;box-shadow:none;padding-bottom:var(--sheet-bottom-space);transform:translateY(calc(100% - var(--sheet-peek) - var(--sheet-bottom-space)))}
  .viewer-overlay .viewer .media-info-sheet:not(.sheet-open):not(.sheet-dragging){background:color-mix(in srgb,#101815 96%,var(--green))}
  .viewer-overlay .viewer .media-info-sheet.sheet-open{transform:translateY(0);box-shadow:0 -6px 24px #0003}
- .media-info-sheet .media-info-handle{height:32px;min-height:32px;border-radius:12px 12px 0 0;gap:5px;padding:0}
+ .media-info-sheet .media-info-handle{height:var(--sheet-peek);min-height:var(--sheet-peek);border-radius:12px 12px 0 0;gap:5px;padding:0}
  .media-info-sheet .media-info-label{display:none}
- .media-info-sheet.sheet-open .media-info-handle{height:44px;min-height:44px}
+ .media-info-sheet.sheet-open .media-info-handle{height:var(--sheet-peek);min-height:var(--sheet-peek)}
  .media-info-sheet.sheet-open .media-info-label{display:block;font-size:11px;opacity:.65}
- .media-info-sheet .media-info-grip{width:26px;height:3px;opacity:.38}
+ .media-info-sheet .media-info-grip{width:32px;height:4px;opacity:.5}
  .media-info-sheet .media-info-handle:focus-visible .media-info-grip{opacity:.85}
 }
 /* Pair facts only when the sheet's own content width can support them. */
@@ -3131,11 +3131,12 @@ body:has(.viewer-overlay) .library-topbar{visibility:hidden;pointer-events:none}
 @media(max-width:760px), (hover:none) and (pointer:coarse){
  :root{--library-safe-top:env(safe-area-inset-top,0px);--library-safe-bottom:env(safe-area-inset-bottom,0px);--library-nav-height:calc(64px + var(--library-safe-bottom))}
  html:has(main.library-workspace-page),body:has(main.library-workspace-page){height:100%;overflow:hidden;overscroll-behavior:none}
- .app-shell:has(main.library-workspace-page){height:100dvh;min-height:0;overflow:hidden}
+ body:has(main.library-workspace-page){position:fixed;inset:0;width:100%}
+ .app-shell:has(main.library-workspace-page){position:fixed;inset:0;width:100%;height:var(--library-viewport-height,100dvh);min-height:0;overflow:hidden}
  .app-shell:has(main.library-workspace-page)>.sidebar{display:none}
- main.library-workspace-page{margin:0;width:100%;height:calc(100dvh - var(--library-nav-height));max-height:calc(100dvh - var(--library-nav-height));min-height:0;padding:0 12px;overflow-x:hidden;overflow-y:auto;scroll-padding-top:calc(72px + var(--library-safe-top));-webkit-overflow-scrolling:touch}
+ main.library-workspace-page{margin:0;width:100%;height:calc(100% - var(--library-nav-height));max-height:calc(100% - var(--library-nav-height));min-height:0;padding:0 12px;overflow-x:hidden;overflow-y:auto;scroll-padding-top:calc(72px + var(--library-safe-top));-webkit-overflow-scrolling:touch}
  main.library-workspace-page>.library-topbar{top:0;min-height:calc(64px + var(--library-safe-top));height:auto;padding-top:calc(8px + var(--library-safe-top));padding-bottom:8px;isolation:isolate}
- .app-shell:has(main.library-workspace-page)>.mobile-nav{display:flex;position:fixed;inset:auto 0 0;height:var(--library-nav-height);padding:8px 7px calc(8px + var(--library-safe-bottom));align-items:center;justify-content:space-around;box-sizing:border-box;background:var(--page-bg);border-top:1px solid var(--line);z-index:70}
+ .app-shell:has(main.library-workspace-page)>.mobile-nav{display:flex;position:absolute;inset:auto 0 0;height:var(--library-nav-height);padding:8px 7px calc(8px + var(--library-safe-bottom));align-items:center;justify-content:space-around;box-sizing:border-box;background:var(--page-bg);border-top:1px solid var(--line);z-index:70}
  .app-shell:has(main.library-workspace-page)>.mobile-nav button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:9px;min-width:0;min-height:44px;flex:1;color:var(--theme-accent-muted)}
  .app-shell:has(main.library-workspace-page)>.mobile-nav button.active{color:var(--green)}
  .app-shell:has(main.library-workspace-page)>.mobile-nav svg{width:21px;height:21px}
@@ -3146,3 +3147,35 @@ body:has(.viewer-overlay) .library-topbar{visibility:hidden;pointer-events:none}
 .viewer-overlay .viewer-close-control{pointer-events:auto;isolation:isolate;touch-action:manipulation}
 
 .overlay.viewer-overlay{backdrop-filter:none;-webkit-backdrop-filter:none}
+
+/* Search state stays visible without reopening the search panel. */
+.library-heading{grid-column:1;grid-row:1;display:flex;align-items:center;gap:12px;min-width:0}
+.library-filter-indicator{display:inline-flex;align-items:center;gap:6px;min-height:34px;padding:6px 9px;border:0;border-radius:10px;background:color-mix(in srgb,var(--green) 8%,transparent);color:var(--green);font-size:11px;white-space:nowrap;touch-action:manipulation}
+.library-filter-indicator:hover{background:color-mix(in srgb,var(--green) 13%,transparent)}
+.library-filter-indicator svg{flex:none;opacity:.8}
+@media(max-width:760px){.library-heading{gap:0}.library-heading.has-search-filter h1{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}.library-filter-indicator{min-height:44px;padding:6px 7px;gap:4px}.library-filter-indicator>svg:first-child{display:none}}
+@media(max-width:360px){.library-filter-indicator span{display:none}.library-filter-indicator>svg:first-child{display:block}.library-filter-indicator{min-width:44px;justify-content:center}}
+
+@media(max-width:760px){
+ .tile-info-heading{display:flex;align-items:flex-start;gap:6px}
+ .tile-info-heading strong{flex:1;min-width:0;padding-top:8px}
+ .mobile-tile-info .tile-info-details .tile-info-close{display:flex;align-items:center;justify-content:center;flex:none;width:36px;height:36px;min-height:36px;margin:-4px -4px 0 0;padding:0;border:0;border-radius:8px;background:transparent;color:var(--ink);touch-action:manipulation}
+ .mobile-tile-info .tile-info-details .tile-info-close:hover{background:color-mix(in srgb,var(--ink) 8%,transparent)}
+}
+
+.tools-attention-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#db8d32;box-shadow:0 0 0 2px var(--theme-surface);flex:none}
+.people-tools-toggle,.people-maintenance-tab,.sidebar nav button,.mobile-nav button{position:relative}
+.people-tools-toggle .tools-attention-dot,.people-maintenance-tab .tools-attention-dot,.mobile-nav .tools-attention-dot{position:absolute;right:5px;top:5px}
+.sidebar .tools-attention-dot{margin-left:auto}
+@media(max-width:760px), (hover:none) and (pointer:coarse){
+ .viewer-overlay .viewer.viewer-expanded{height:var(--library-viewport-height,100dvh);max-height:var(--library-viewport-height,100dvh)}
+ .viewer-overlay .viewer .media-info-sheet{height:calc(var(--library-viewport-height,100dvh)*.8);max-height:calc(var(--library-viewport-height,100dvh)*.8)}
+}
+
+/* Follow the upward gesture, then lift and shrink back into the Library. */
+.overlay.viewer-overlay .viewer{transform:translateY(var(--viewer-dismiss-y,0px)) scale(var(--viewer-dismiss-scale,1));transform-origin:50% 42%;transition:transform 240ms cubic-bezier(.2,.7,.2,1),opacity 240ms ease}
+.overlay.viewer-overlay.viewer-dismiss-dragging .viewer{transition:none}
+.overlay.viewer-overlay.viewer-dismissing{pointer-events:none;animation:viewer-backdrop-out 240ms ease forwards}
+.overlay.viewer-overlay.viewer-dismissing .viewer{transform:translateY(-35vh) scale(.68);opacity:0}
+@keyframes viewer-backdrop-out{to{background:transparent}}
+@media(prefers-reduced-motion:reduce){.overlay.viewer-overlay .viewer{transition:none}.overlay.viewer-overlay.viewer-dismissing{animation:none}}

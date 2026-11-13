@@ -42,3 +42,20 @@ def test_history_distinguishes_searches_and_requested_downloads(client):
     assert rows[0]['details']['media_id']=='0'
     assert rows[1]['details']['expression']=='Includes("Maya")'
     assert c.get('/api/profiles/guest/activity').status_code == 403
+
+
+def test_people_preferences_default_restore_validation_and_account_isolation(client):
+    yoav, _ = signed_in(client, 'yoav')
+    assert yoav.get('/api/auth/me').json()['people_browse'] is None
+    prefs={'known':True,'unknown':False,'sort':'name','directions':{'name':'desc','count':'asc'}}
+    assert yoav.put('/api/profiles/yoav/people-preferences',json=prefs).status_code==200
+    # Existing theme/source saves must not overwrite People choices.
+    yoav.put('/api/profiles/yoav/preferences',json={'theme':'plum','source_ids':[],'source_names':[]})
+    another_device, _ = signed_in(client, 'yoav')
+    assert another_device.get('/api/auth/me').json()['people_browse']==prefs
+    hila, _ = signed_in(client, 'hila')
+    assert hila.get('/api/auth/me').json()['people_browse'] is None
+    assert hila.put('/api/profiles/yoav/people-preferences',json=prefs).status_code==403
+    assert yoav.put('/api/profiles/yoav/people-preferences',json={**prefs,'sort':'invalid'}).status_code==422
+    assert yoav.put('/api/profiles/yoav/people-preferences',json={**prefs,'known':False,'unknown':False}).status_code==422
+    assert yoav.put('/api/profiles/yoav/people-preferences',json={}).json()['people_browse']['sort']=='count'

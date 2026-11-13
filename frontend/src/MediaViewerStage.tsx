@@ -2,7 +2,7 @@ import {consumeTouchClick} from "./touchActivation";
 import SaveMedia from "./SaveMedia";
 import React,{useEffect,useRef,useState} from "react";
 import {X,Maximize,Minimize,Download,ChevronLeft,ChevronRight,Plus,Minus,RotateCcw,Play,Pause,Volume2,VolumeX,LoaderCircle,UserRoundPlus} from "lucide-react";
-type Props={kind:string;expanded:boolean;onToggleExpanded:()=>void;onClose:()=>void;onEditFaces:()=>void;direction:"next"|"previous"|"none";departingImage:string;id:string;name:string;width:number;height:number;imageUrl:string;videoUrl:string;previous:string|null;next:string|null;position:number|null;total:number;busy:boolean;onNavigate:(id:string,swiped?:boolean)=>Promise<boolean|void>};
+type Props={kind:string;expanded:boolean;onToggleExpanded:()=>void;onClose:(animated?:boolean)=>void;onDismissProgress:(y:number)=>void;onEditFaces:()=>void;direction:"next"|"previous"|"none";departingImage:string;id:string;name:string;width:number;height:number;imageUrl:string;videoUrl:string;previous:string|null;next:string|null;position:number|null;total:number;busy:boolean;closing:boolean;onNavigate:(id:string,swiped?:boolean)=>Promise<boolean|void>};
 export default function MediaViewerStage(p:Props){
  const closeTouch=useRef<{x:number;y:number}|null>(null);
  const [saveOpen,setSaveOpen]=useState(false);
@@ -48,11 +48,11 @@ export default function MediaViewerStage(p:Props){
    };
    el.addEventListener("wheel",wheel,{passive:false});return()=>el.removeEventListener("wheel",wheel);
  },[zoom,pan,box,p.next,p.previous,p.busy]);
- useEffect(()=>{const key=(e:KeyboardEvent)=>{if(saveOpen)return;
+ useEffect(()=>{const key=(e:KeyboardEvent)=>{if(saveOpen||p.closing)return;
    if((e.target as HTMLElement)?.closest('input,textarea,select,video,[contenteditable]'))return;
    if(e.key==="ArrowLeft"){e.preventDefault();navigate(p.previous);}if(e.key==="ArrowRight"){e.preventDefault();navigate(p.next);}
    if(e.key==="+"||e.key==="="){e.preventDefault();changeZoom(zoom+.5);reveal();}if(e.key==="-"){e.preventDefault();changeZoom(zoom-.5);reveal();}if(e.key==="0"){changeZoom(1);reveal();}
- };window.addEventListener("keydown",key);return()=>window.removeEventListener("keydown",key);},[p.previous,p.next,p.busy,zoom,saveOpen]);
+ };window.addEventListener("keydown",key);return()=>window.removeEventListener("keydown",key);},[p.previous,p.next,p.busy,p.closing,zoom,saveOpen]);
  const startVideo=async()=>{
    setVideoError("");setPlayingVideo(true);setVideoLoading(true);reveal();
    if(p.expanded)return;
@@ -66,13 +66,14 @@ export default function MediaViewerStage(p:Props){
  return <div className={"media-stage gentle-viewer"+((controls||saveOpen)?" controls-visible":"")} onPointerMove={e=>{if(e.pointerType==="mouse")reveal();}}>
    <div ref={viewport} className={"media-viewport"+(zoom>1?" pannable":"")+(p.expanded?" expanded-gestures":"")} aria-label="Media preview"
      onDoubleClick={e=>{if(pointerKind.current==="mouse"){changeZoom(zoom>1?1:2);reveal();}}}
-     onPointerDown={e=>{if(swipeLocked.current||p.busy)return;setSettling(false);swipeAxis.current=null;pointerKind.current=e.pointerType;e.currentTarget.setPointerCapture(e.pointerId);pointers.current.set(e.pointerId,{x:e.clientX,y:e.clientY});drag.current={x:e.clientX,y:e.clientY,px:pan.x,py:pan.y,started:Date.now()};if(pointers.current.size===2){moveSwipe(0);setDragging(false);wasPinch.current=true;const [a,b]=[...pointers.current.values()];pinch.current={distance:Math.hypot(a.x-b.x,a.y-b.y),zoom};}}}
-     onPointerMove={e=>{if(!pointers.current.has(e.pointerId))return;pointers.current.set(e.pointerId,{x:e.clientX,y:e.clientY});if(pointers.current.size===2&&pinch.current){const [a,b]=[...pointers.current.values()];const r=e.currentTarget.getBoundingClientRect();changeZoom(pinch.current.zoom*Math.hypot(a.x-b.x,a.y-b.y)/Math.max(1,pinch.current.distance),{x:(a.x+b.x)/2-r.left-r.width/2,y:(a.y+b.y)/2-r.top-r.height/2});}else if(drag.current&&zoom>1)setPan(clamp({x:drag.current.px+e.clientX-drag.current.x,y:drag.current.py+e.clientY-drag.current.y}));else if(drag.current&&!wasPinch.current&&zoom===1){const dx=e.clientX-drag.current.x,dy=e.clientY-drag.current.y;if(!swipeAxis.current&&Math.hypot(dx,dy)>8)swipeAxis.current=Math.abs(dx)>Math.abs(dy)*1.2?'x':'y';if(swipeAxis.current==='x'){setDragging(true);setDeparting(false);const available=dx<0?p.next:p.previous;moveSwipe(available?Math.max(-box.w,Math.min(box.w,dx)):dx*.22);}}}}
-     onPointerUp={e=>{if(!wasPinch.current&&drag.current){const dx=e.clientX-drag.current.x,dy=e.clientY-drag.current.y;
+     onPointerDown={e=>{if(swipeLocked.current||p.busy||p.closing)return;setSettling(false);swipeAxis.current=null;pointerKind.current=e.pointerType;e.currentTarget.setPointerCapture(e.pointerId);pointers.current.set(e.pointerId,{x:e.clientX,y:e.clientY});drag.current={x:e.clientX,y:e.clientY,px:pan.x,py:pan.y,started:Date.now()};if(pointers.current.size===2){p.onDismissProgress(0);moveSwipe(0);setDragging(false);wasPinch.current=true;const [a,b]=[...pointers.current.values()];pinch.current={distance:Math.hypot(a.x-b.x,a.y-b.y),zoom};}}}
+     onPointerMove={e=>{if(!pointers.current.has(e.pointerId))return;pointers.current.set(e.pointerId,{x:e.clientX,y:e.clientY});if(pointers.current.size===2&&pinch.current){const [a,b]=[...pointers.current.values()];const r=e.currentTarget.getBoundingClientRect();changeZoom(pinch.current.zoom*Math.hypot(a.x-b.x,a.y-b.y)/Math.max(1,pinch.current.distance),{x:(a.x+b.x)/2-r.left-r.width/2,y:(a.y+b.y)/2-r.top-r.height/2});}else if(drag.current&&zoom>1)setPan(clamp({x:drag.current.px+e.clientX-drag.current.x,y:drag.current.py+e.clientY-drag.current.y}));else if(drag.current&&!wasPinch.current&&zoom===1){const dx=e.clientX-drag.current.x,dy=e.clientY-drag.current.y;if(!swipeAxis.current&&Math.hypot(dx,dy)>8)swipeAxis.current=Math.abs(dx)>Math.abs(dy)*1.2?'x':'y';if(swipeAxis.current==='y'&&e.pointerType!=='mouse')p.onDismissProgress(Math.min(0,dy)*.65);if(swipeAxis.current==='x'){setDragging(true);setDeparting(false);const available=dx<0?p.next:p.previous;moveSwipe(available?Math.max(-box.w,Math.min(box.w,dx)):dx*.22);}}}}
+     onPointerUp={e=>{let dismissing=false;if(!wasPinch.current&&drag.current){const dx=e.clientX-drag.current.x,dy=e.clientY-drag.current.y;
        if(zoom===1&&swipeAxis.current==='x'){const target=dx<0?p.next:p.previous;const speed=Math.abs(dx)/Math.max(1,Date.now()-drag.current.started);const commit=target&&(Math.abs(dx)>Math.max(55,box.w*.22)||(Math.abs(dx)>28&&speed>.45));settleSwipe(commit?(dx<0?-box.w:box.w):0,commit?target:null);}
+       else if(zoom===1&&swipeAxis.current==='y'&&dy < -70&&Math.abs(dy)>Math.abs(dx)*1.3&&e.pointerType!=='mouse'){e.preventDefault();dismissing=true;consumeTouchClick();p.onClose(true);}
        else if(Math.hypot(dx,dy)<10){const now=Date.now();if(e.pointerType!=="mouse"&&now-lastTap.current<320){changeZoom(zoom>1?1:2);lastTap.current=0;}else lastTap.current=now;reveal();}
-     }pointers.current.delete(e.pointerId);if(!pointers.current.size)resetGesture();else{drag.current=null;pinch.current=null;}}}
-     onPointerCancel={()=>{if(swipeOffset.current)settleSwipe(0);resetGesture();}}>
+     }if(!dismissing)p.onDismissProgress(0);pointers.current.delete(e.pointerId);if(!pointers.current.size)resetGesture();else{drag.current=null;pinch.current=null;}}}
+     onPointerCancel={()=>{p.onDismissProgress(0);if(swipeOffset.current)settleSwipe(0);resetGesture();}}>
      {departing&&!dragging&&!settling&&<div className={"departing-frame motion-"+p.direction} onAnimationEnd={()=>setDeparting(false)}><img src={p.departingImage} alt="" aria-hidden="true"/></div>}
      {(dragging||settling)&&[[-1,p.previous],[1,p.next]].map(([side,id])=>id&&<div key={String(side)} className="swipe-neighbor" style={{transform:'translateX('+(Number(side)*box.w+swipeX)+'px)',transition:settling?'transform 220ms cubic-bezier(.2,.7,.2,1)':'none'}} aria-hidden="true"><img src={'/api/media/'+id+'/thumbnail?size=large'} alt="" draggable={false}/></div>)}
      <div className={"incoming-frame motion-"+p.direction+(dragging||settling?" finger-tracking":"")} style={dragging||settling?{animation:'none',transform:'translateX('+swipeX+'px)',transition:settling?'transform 220ms cubic-bezier(.2,.7,.2,1)':'none'}:undefined}>
