@@ -1,3 +1,4 @@
+import {consumeTouchClick} from "./touchActivation";
 import ResultsLoadingNotice from "./ResultsLoadingNotice";
 import {withMediaFilter,selectedMediaFilter} from "./mediaFilter";
 import {searchSuggestions,acceptSuggestion,normalizeSearch,deviceKey,type SearchItem,type Suggestion} from "./searchSuggestions";
@@ -81,6 +82,8 @@ export default function UnifiedSearch({
   const [cursor,setCursor]=useState(0);
   const [suggestionsOpen,setSuggestionsOpen]=useState(false);
   const [activeSuggestion,setActiveSuggestion]=useState(-1);
+  const suggestionTouch=useRef<{x:number;y:number}|null>(null);
+  const suppressSuggestionClick=useRef(false);
   const placeRequest=useRef<Promise<Place[]> | null>(null);
   function loadPlaces(){
     if(!placeRequest.current)placeRequest.current=fetch("/api/place-options").then(r=>{if(!r.ok)throw Error("Could not load place suggestions");return r.json();}).then(r=>{setPlaces(r.options);return r.options;}).catch(e=>{placeRequest.current=null;throw e;});
@@ -317,7 +320,7 @@ export default function UnifiedSearch({
               aria-expanded={suggestionsOpen && suggestions.length>0}
               aria-activedescendant={suggestionsOpen && activeSuggestion>=0 ? "search-suggestion-"+activeSuggestion : undefined}
               onFocus={()=>{setSuggestionsOpen(!!draft);setCursor(input.current?.selectionStart??draft.length);}}
-              onBlur={()=>setSuggestionsOpen(false)}
+              onBlur={e=>{if(!suggestionTouch.current&&!(e.relatedTarget as HTMLElement|null)?.closest('.search-suggestions'))setSuggestionsOpen(false);}}
               onSelect={(e)=>{setCursor(e.currentTarget.selectionStart??0);setActiveSuggestion(-1);}}
               onClick={()=>setSuggestionsOpen(!!draft)}
               onKeyDown={(e)=>{
@@ -331,7 +334,10 @@ export default function UnifiedSearch({
             {draft && <button type="button" className="search-clear" aria-label="Clear search" onClick={()=>{editDraft("",0);input.current?.focus();setSuggestionsOpen(false);}}>×</button>}
             </div>
             {suggestionsOpen && suggestions.length>0 && <div id="search-suggestions" className="search-suggestions" role="listbox" aria-label="Search suggestions">
-              {suggestions.map((s,i)=><button type="button" role="option" id={"search-suggestion-"+i} aria-selected={i===activeSuggestion} key={s.kind+":"+s.label+":"+i} onPointerDown={e=>e.preventDefault()} onClick={()=>complete(s)}><span>{s.label}</span><small>{s.kind}</small></button>)}
+              {suggestions.map((s,i)=><button type="button" role="option" id={"search-suggestion-"+i} aria-selected={i===activeSuggestion} key={s.kind+":"+s.label+":"+i} onPointerDown={e=>{suppressSuggestionClick.current=false;if(e.pointerType!=="mouse")suggestionTouch.current={x:e.clientX,y:e.clientY};e.preventDefault();}}
+                onPointerUp={e=>{const start=suggestionTouch.current;suggestionTouch.current=null;if(e.pointerType!=="mouse"&&start&&Math.hypot(e.clientX-start.x,e.clientY-start.y)<10){e.preventDefault();suppressSuggestionClick.current=true;consumeTouchClick();complete(s);}}}
+                onPointerCancel={()=>{suggestionTouch.current=null;}}
+                onClick={e=>{if(suppressSuggestionClick.current&&e.detail!==0){suppressSuggestionClick.current=false;return;}complete(s);}}><span>{s.label}</span><small>{s.kind}</small></button>)}
             </div>}
             <button className="primary" disabled={busy}>
               {busy ? "Checking…" : "Search"}

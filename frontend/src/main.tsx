@@ -629,9 +629,8 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
   };
   const loadViewer=(id:string)=>{
     const key=viewerKey(id),cached=viewerCache.current.get(key);if(cached)return cached;
-    // Start decoding immediately, independently of metadata and navigation queries.
+    // Preload independently of metadata and navigation queries.
     const image=new Image();image.src=thumb(id,"large");viewerImages.current.set(key,image);
-    void image.decode().catch(()=>{});
     const pending=api<Detail>("/media/"+id).then(media=>{viewerDetails.current.set(key,media);return media;}).catch(error=>{viewerCache.current.delete(key);viewerImages.current.delete(key);throw error;});
     viewerCache.current.set(key,pending);
     while(viewerCache.current.size>9){const oldest=viewerCache.current.keys().next().value!;viewerCache.current.delete(oldest);viewerImages.current.delete(oldest);viewerDetails.current.delete(oldest);}
@@ -652,6 +651,8 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
     void buffer().catch(()=>{});return()=>{active=false;};
   },[detail?.id,revision,status?.revision]);
   const open = async (id: string, swiped = false) => {
+    const focused=document.activeElement;
+    if(focused instanceof HTMLElement&&focused.matches('input,textarea,[contenteditable=true]'))focused.blur();
     const sequence=++viewerSequence.current,key=viewerKey(id);
     const direction=detail?(id===neighbors.previous?"previous":"next"):"none";
     const index=items.findIndex(item=>item.id===id),item=items[index];
@@ -899,6 +900,7 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
     try {
       const p = query();
       p.set("offset", String(items.length));
+      p.set("include_total", "false");
       const r = await api<{ items: Media[] }>("/media?" + p);
       if (expected === generation.current)
         setItems((old) => [...old, ...r.items]);
@@ -917,7 +919,7 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
       const pane=event.currentTarget as HTMLElement;
       if(pane!==mobile)return;
 
-      if(!loading&&!moreError&&pane.scrollHeight-pane.scrollTop-pane.clientHeight<700)void loadMore();
+      if(!loading&&!moreError&&pane.scrollHeight-pane.scrollTop-pane.clientHeight<Math.max(1400,pane.clientHeight*3))void loadMore();
     };
     gallery.addEventListener("scroll",onScroll,{passive:true});mobile.addEventListener("scroll",onScroll,{passive:true});
     return()=>{gallery.removeEventListener("scroll",onScroll);mobile.removeEventListener("scroll",onScroll);};
@@ -1013,8 +1015,8 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
   const groupSuggestions = new Map<number, {name:string;count:number}>();
   if (groupMatch && groupMatch.group === group && !activeGroup?.name) groupSuggestions.set(groupMatch.person_id, groupMatch);
   return (
-    <div className={"app-shell"+(reviewFocus&&page==="people"&&group===null&&!settingsOpen?" review-focused":"")}>
-      <aside className="sidebar" inert={sheet || !!detail}>
+    <div inert={!!detail} className={"app-shell"+(reviewFocus&&page==="people"&&group===null&&!settingsOpen?" review-focused":"")}>
+      <aside className="sidebar" inert={sheet}>
         <a
           className="brand"
           href="#"
@@ -1065,7 +1067,7 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
           </div>
         </div>
       </aside>
-      <main className={!settingsOpen && page === "library" ? "library-workspace-page" : ""} inert={sheet || !!detail}>
+      <main className={!settingsOpen && page === "library" ? "library-workspace-page" : ""} inert={sheet}>
         <header className="topbar library-topbar">
           <h1>{settingsOpen ? "Library tools" : page === "library" ? "Library" : "People"}</h1>
           <div className="library-topbar-actions">
@@ -1766,7 +1768,7 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
           </>
         )}
       </main>
-      <nav className="mobile-nav" inert={sheet || !!detail}>
+      <nav className="mobile-nav" inert={sheet}>
         <button
           className={!settingsOpen && page === "library" ? "active" : ""}
           onClick={() => {setSettingsOpen(false);setPage("library");}}
@@ -1978,7 +1980,7 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
           </section>
         </div>
       )}
-      {detail && (
+      {detail && createPortal(
         <div className={"overlay viewer-overlay"+(expanded?" viewer-expanded-overlay":"")} onClick={closeViewer}>
           <section
             role="dialog"
@@ -2139,7 +2141,7 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
               </details>
             </MediaInfoSheet>
           </section>
-        </div>
+        </div>,document.body
       )}
       <AppUpdates canReload={!detail && !settingsOpen && !busy && !peopleWorking && !approvingAll && page === "library"} />
       {notice && (

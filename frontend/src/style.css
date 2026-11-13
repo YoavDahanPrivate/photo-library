@@ -3140,3 +3140,9 @@ body:has(.viewer-overlay) .library-topbar{visibility:hidden;pointer-events:none}
  .app-shell:has(main.library-workspace-page)>.mobile-nav button.active{color:var(--green)}
  .app-shell:has(main.library-workspace-page)>.mobile-nav svg{width:21px;height:21px}
 }
+
+.search-suggestions{touch-action:pan-y;overscroll-behavior:contain}
+.search-suggestions button{touch-action:manipulation}
+.viewer-overlay .viewer-close-control{pointer-events:auto;isolation:isolate;touch-action:manipulation}
+
+.overlay.viewer-overlay{backdrop-filter:none;-webkit-backdrop-filter:none}

@@ -1,8 +1,10 @@
+import {consumeTouchClick} from "./touchActivation";
 import SaveMedia from "./SaveMedia";
 import React,{useEffect,useRef,useState} from "react";
 import {X,Maximize,Minimize,Download,ChevronLeft,ChevronRight,Plus,Minus,RotateCcw,Play,Pause,Volume2,VolumeX,LoaderCircle,UserRoundPlus} from "lucide-react";
 type Props={kind:string;expanded:boolean;onToggleExpanded:()=>void;onClose:()=>void;onEditFaces:()=>void;direction:"next"|"previous"|"none";departingImage:string;id:string;name:string;width:number;height:number;imageUrl:string;videoUrl:string;previous:string|null;next:string|null;position:number|null;total:number;busy:boolean;onNavigate:(id:string,swiped?:boolean)=>Promise<boolean|void>};
 export default function MediaViewerStage(p:Props){
+ const closeTouch=useRef<{x:number;y:number}|null>(null);
  const [saveOpen,setSaveOpen]=useState(false);
  const [controls,setControls]=useState(true),[highReady,setHighReady]=useState(false),[highError,setHighError]=useState(false);
  const [zoom,setZoom]=useState(1),[pan,setPan]=useState({x:0,y:0}),[box,setBox]=useState({w:0,h:0}),[intrinsic,setIntrinsic]=useState({w:p.width||1,h:p.height||1});
@@ -83,7 +85,11 @@ export default function MediaViewerStage(p:Props){
      </div>
      {highWanted&&!highReady&&!highError&&<img className="high-resolution-loader" src={"/api/media/"+p.id+"/display-original"} alt="" aria-hidden="true" onLoad={()=>setHighReady(true)} onError={()=>setHighError(true)}/>}
    </div>
-   <button type="button" className="viewer-close-control" aria-label="Close viewer" onClick={e=>{e.stopPropagation();p.onClose();}}><X/></button>
+   <button type="button" className="viewer-close-control" aria-label="Close viewer"
+     onPointerDown={e=>{if(e.pointerType!=="mouse"){e.preventDefault();e.stopPropagation();closeTouch.current={x:e.clientX,y:e.clientY};}}}
+     onPointerUp={e=>{const start=closeTouch.current;closeTouch.current=null;if(start&&Math.hypot(e.clientX-start.x,e.clientY-start.y)<10){e.preventDefault();e.stopPropagation();consumeTouchClick();p.onClose();}}}
+     onPointerCancel={()=>{closeTouch.current=null;}}
+     onClick={e=>{e.stopPropagation();p.onClose();}}><X/></button>
    <div className="viewer-overlay-controls overlay-top">
      <span className="viewer-position">{p.position?p.position.toLocaleString()+" / "+p.total.toLocaleString():""}</span>
      {button(p.expanded?"Collapse fullscreen view":"Expand to fullscreen",p.expanded?<Minimize/>:<Maximize/>,p.onToggleExpanded)}

@@ -1,3 +1,6 @@
+from functools import lru_cache
+import time
+from . import core
 import json, threading, os, sqlite3, logging
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
@@ -403,6 +406,31 @@ def map_land():
     )
 
 
+@lru_cache(maxsize=3)
+def ordered_media_ids(database_path, revision, epoch, where, args, order, sort_by):
+    # The format-pair filter ranks the complete search result. Reuse its ordered
+    # identities across pages, never the mutable media/annotation rows themselves.
+    sorting=f"m.taken IS NULL,m.taken {order.upper()},m.id" if sort_by=='capture' else f"coalesce((SELECT file_created FROM media_original_metadata om WHERE om.media_id=m.id),m.mtime) IS NULL,coalesce((SELECT file_created FROM media_original_metadata om WHERE om.media_id=m.id),m.mtime) {order.upper()},m.id"
+    with db() as catalogue:
+        return tuple(row[0] for row in catalogue.execute("SELECT m.id FROM media m WHERE "+where+" ORDER BY "+sorting,args))
+
+
+def media_page_rows(c, select, where, args, order, sort_by, offset, limit):
+    if sort_by != "capture":
+        sorting=f"coalesce((SELECT file_created FROM media_original_metadata om WHERE om.media_id=m.id),m.mtime) IS NULL,coalesce((SELECT file_created FROM media_original_metadata om WHERE om.media_id=m.id),m.mtime) {order.upper()},m.id"
+        return c.execute(select+" WHERE "+where+f" ORDER BY {sorting} LIMIT ? OFFSET ?",args+[limit,offset]).fetchall()
+    # Keep undated files last without sorting the entire result by an expression.
+    # The existing (status,taken,id) index serves both date partitions.
+    dated="("+where+") AND m.taken IS NOT NULL"
+    rows=c.execute(select+" WHERE "+dated+f" ORDER BY m.taken {order.upper()},m.id LIMIT ? OFFSET ?",args+[limit,offset]).fetchall()
+    if len(rows)==limit:return rows
+    if rows:dated_count=offset+len(rows)
+    elif offset:dated_count=c.execute("SELECT count(*) FROM media m WHERE "+dated,args).fetchone()[0]
+    else:dated_count=0
+    null_offset=max(0,offset-dated_count)
+    return rows+c.execute(select+" WHERE ("+where+") AND m.taken IS NULL ORDER BY m.id LIMIT ? OFFSET ?",args+[limit-len(rows),null_offset]).fetchall()
+
+
 @app.get("/api/media")
 def media(
     filters=Depends(media_filters),
@@ -410,19 +438,22 @@ def media(
     sort_by: Literal["capture", "file"] = "capture",
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=80, ge=1, le=200),
+    include_total: bool = True,
 ):
     where, args = filters
     with db() as c:
-        total = c.execute(
-            "SELECT count(*) FROM media m WHERE " + where, args
-        ).fetchone()[0]
-        sorting = f"m.taken IS NULL,m.taken {order.upper()},m.id" if sort_by=='capture' else f"coalesce((SELECT file_created FROM media_original_metadata om WHERE om.media_id=m.id),m.mtime) IS NULL,coalesce((SELECT file_created FROM media_original_metadata om WHERE om.media_id=m.id),m.mtime) {order.upper()},m.id"
-        rows = c.execute(
-            "SELECT m.id,m.database_id,m.source_id,m.album_id,(SELECT alias FROM library_databases WHERE id=m.database_id) database_alias,m.name,m.phone,m.album,m.kind,m.taken,m.width,m.height,m.duration,m.latitude,m.longitude FROM media m WHERE "
-            + where
-            + f" ORDER BY {sorting} LIMIT ? OFFSET ?",
-            args + [limit, offset],
-        ).fetchall()
+        collapsed=where.startswith("m.id IN (SELECT id FROM (")
+        snapshot=None
+        if collapsed:
+            revision=c.execute("SELECT revision FROM catalogue_clock WHERE id=1").fetchone()[0]
+            snapshot=ordered_media_ids(str(core.database_dir()),revision,int(time.monotonic()//60),where,tuple(args),order,sort_by)
+        total=(len(snapshot) if snapshot is not None else c.execute("SELECT count(*) FROM media m WHERE "+where,args).fetchone()[0]) if include_total else None
+        select="SELECT m.id,m.database_id,m.source_id,m.album_id,(SELECT alias FROM library_databases WHERE id=m.database_id) database_alias,m.name,m.phone,m.album,m.kind,m.taken,m.width,m.height,m.duration,m.latitude,m.longitude FROM media m"
+        if snapshot is not None:
+            page=snapshot[offset:offset+limit]
+            found={row['id']:row for row in c.execute(select+" WHERE m.id IN ("+','.join('?' for _ in page)+")",page)} if page else {}
+            rows=[found[identity] for identity in page if identity in found]
+        else:rows=media_page_rows(c,select,where,args,order,sort_by,offset,limit)
         items = [dict(r) for r in rows]
         for item in items:
             item.update(location_details(c, item["id"]))
