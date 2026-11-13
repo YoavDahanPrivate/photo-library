@@ -5,6 +5,7 @@ from pathlib import Path
 import cv2, numpy as np, imageio_ffmpeg, pillow_heif
 from PIL import Image, ImageOps, ExifTags
 from .core import DATA, db, init, original
+from . import cache_images
 
 pillow_heif.register_heif_opener()
 IMAGES = {
@@ -242,7 +243,7 @@ class Recognition:
                     continue
                 ok, jpg = cv2.imencode(".jpg", crop)
                 if ok:
-                    (DATA / "faces" / f"{fid}.jpg").write_bytes(jpg.tobytes())
+                    cache_images.write(f"faces/{fid}.jpg", jpg.tobytes())
                 c.execute(
                     "INSERT OR IGNORE INTO faces(id,media_id,timestamp,bbox,embedding,bbox_width,bbox_height) VALUES(?,?,?,?,?,?,?)",
                     (
@@ -294,13 +295,13 @@ def faces_only():
     for n, row in enumerate(rows, 1):
         try:
             if row["kind"] == "photo":
-                paths = [(0, DATA / "thumbs" / f'{row["id"]}-large.jpg')]
+                paths = [(0, cache_images.materialize(f'thumbs/{row["id"]}-large.jpg'))]
             else:
                 times = sorted(
                     set(round((row["duration"] or 0) * f, 3) for f in (0.15, 0.5, 0.85))
                 )
                 paths = [
-                    (t, DATA / "frames" / f'{row["id"]}-{i}.jpg')
+                    (t, cache_images.materialize(f'frames/{row["id"]}-{i}.jpg'))
                     for i, t in enumerate(times)
                 ]
             for t, path in paths:
@@ -388,12 +389,12 @@ def main():
             for name, edge in [("small", 240), ("medium", 640), ("large", 1600)]:
                 copy = image.copy()
                 copy.thumbnail((edge, edge), Image.Resampling.LANCZOS)
-                dest = DATA / "thumbs" / f'{row["id"]}-{name}.jpg'
+                dest = cache_images.write_path(f'thumbs/{row["id"]}-{name}.jpg')
                 copy.save(dest.with_suffix(".tmp"), format="JPEG", quality=85)
                 dest.with_suffix(".tmp").replace(dest)
             for i, (t, img) in enumerate(frames):
                 if row["kind"] == "video":
-                    img.save(DATA / "frames" / f'{row["id"]}-{i}.jpg', quality=85)
+                    img.save(cache_images.write_path(f'frames/{row["id"]}-{i}.jpg'), quality=85)
             with db() as c:
                 c.execute(
                     "UPDATE media SET status='ready',error=NULL,sha=?,taken=?,width=?,height=?,duration=?,latitude=?,longitude=?,metadata=? WHERE id=?",

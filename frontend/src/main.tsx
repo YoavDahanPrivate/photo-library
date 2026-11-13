@@ -1,3 +1,10 @@
+import MediaInfoSheet from "./MediaInfoSheet";
+import {SlidersHorizontal} from "lucide-react";
+import {createPortal} from "react-dom";
+import LibraryNotifications from './LibraryNotifications';
+import SystemNotice from './SystemNotice';
+import {ProfileShell,saveProfilePreferences,recordProfileSearch,type Profile} from "./UserProfiles";
+import {exportUrl} from "./mediaTransfer";
 import MatchingQuality from "./MatchingQuality";
 import PeopleProgress,{type PeopleOperation} from "./PeopleProgress";
 import ReviewPager from "./ReviewPager";
@@ -118,7 +125,7 @@ async function api<T>(path: string, body?: unknown): Promise<T> {
   );
   return readApiResponse<T>(r);
 }
-function App() {
+function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void}) {
   const [settingsOpen, setSettingsOpen] = useState(()=>window.location.hash.startsWith("#tools/"));
   useEffect(()=>{const changed=()=>setSettingsOpen(window.location.hash.startsWith("#tools/"));window.addEventListener("hashchange",changed);return()=>window.removeEventListener("hashchange",changed);},[]);
   useEffect(()=>{if(!settingsOpen&&window.location.hash.startsWith("#tools/"))window.history.replaceState(null,"",window.location.pathname+window.location.search);},[settingsOpen]);
@@ -132,10 +139,12 @@ function App() {
   const viewerSequence=useRef(0);
   const viewerImages=useRef(new Map<string,HTMLImageElement>());
   const viewerNeighbors=useRef(new Map<string,ViewerNeighbors>());
-  const viewerCache=useRef(new Map<string,Promise<{media:Detail;near:ViewerNeighbors}>>());
+  const viewerDetails=useRef(new Map<string,Detail>());
+  const neighborhoodRequests=useRef(new Map<string,Promise<ViewerNeighbors>>());
+  const viewerCache=useRef(new Map<string,Promise<Detail>>());
   const [slideDirection,setSlideDirection]=useState<"next"|"previous"|"none">("none");
   const [departingImage,setDepartingImage]=useState("");
-  const [backToSearch,setBackToSearch]=useState(false);
+  const [searchOpen,setSearchOpen]=useState(false);
   const viewerElement=useRef<HTMLElement>(null);
   const [expanded,setExpanded]=useState(false);
   const [fullscreenHint,setFullscreenHint]=useState("");
@@ -178,7 +187,18 @@ function App() {
   const [viewerBusy,setViewerBusy]=useState(false);
   const [neighbors,setNeighbors]=useState<ViewerNeighbors>({previous:null,next:null,position:null,total:0});
   const closeViewer=()=>{collapseViewer();viewerSequence.current++;setDetail(null);setViewerBusy(false);};
-  const [order, setOrder] = useState("desc");
+  const [displayOptionsOpen,setDisplayOptionsOpen]=useState(false);
+  useEffect(()=>{
+    if(!displayOptionsOpen)return;
+    const close=(e:PointerEvent|KeyboardEvent)=>{
+      if(e instanceof KeyboardEvent){if(e.key==='Escape'){setDisplayOptionsOpen(false);document.querySelector<HTMLButtonElement>('.library-options-toggle')?.focus();}}
+      else if(!(e.target as HTMLElement).closest('.library-filter-slot,.library-options-toggle'))setDisplayOptionsOpen(false);
+    };
+    document.addEventListener('pointerdown',close);document.addEventListener('keydown',close);
+    return()=>{document.removeEventListener('pointerdown',close);document.removeEventListener('keydown',close);};
+  },[displayOptionsOpen]);
+  const [headerControls,setHeaderControls]=useState<HTMLDivElement|null>(null);
+  const [order, setOrder] = useState(()=>{try{return localStorage.getItem("dahan.order."+profile.id)||"desc";}catch{return "desc";}});
   const [suggestions, setSuggestions] = useState<
     {
       face_id: string;
@@ -268,7 +288,7 @@ function App() {
   const [page, setPage] = useState<"library" | "people">("library");
   const [peopleQuery, setPeopleQuery] = useState("");
   const [geo, setGeo] = useState<GeoSelection>(emptyGeo);
-  const [view, setView] = useState("months");
+  const [view, setView] = useState(()=>{try{return localStorage.getItem("dahan.view."+profile.id)||"months";}catch{return "months";}});
   const generation = useRef(0);
   const [sources, setSources] = useState<Source[]>([]),
     [scope, setScope] = useState<string[]>([]),
@@ -315,7 +335,19 @@ function App() {
     [notice, setNotice] = useState(""),
     [revision, setRevision] = useState(0);
   const [selectingMedia,setSelectingMedia]=useState(false),[selectedMedia,setSelectedMedia]=useState<string[]>([]),[editingMetadata,setEditingMetadata]=useState(false);
-  const [sortBy,setSortBy]=useState('capture');
+  useEffect(()=>{
+    const dismiss=(e:PointerEvent|KeyboardEvent)=>{
+      const menu=document.querySelector<HTMLDetailsElement>('.library-appearance');
+      if(e instanceof KeyboardEvent&&e.key==='Escape'){
+        if(menu?.open){menu.open=false;menu.querySelector<HTMLElement>('summary')?.focus();}
+        else if(selectingMedia&&!document.querySelector('[role="dialog"]')&&!(e.target as HTMLElement).closest('input,textarea,select')){setSelectingMedia(false);setSelectedMedia([]);}
+      }else if(e instanceof PointerEvent&&menu?.open&&!menu.contains(e.target as Node))menu.open=false;
+    };
+    document.addEventListener('pointerdown',dismiss);document.addEventListener('keydown',dismiss);
+    return()=>{document.removeEventListener('pointerdown',dismiss);document.removeEventListener('keydown',dismiss);};
+  },[selectingMedia]);
+
+  const [sortBy,setSortBy]=useState(()=>{try{return localStorage.getItem('dahan.sort.'+profile.id)||'capture';}catch{return 'capture';}});
   const [connectionError,setConnectionError]=useState("");
   useEffect(()=>{let active=true;api<typeof hierarchy>("/library/hierarchy").then(value=>{if(active)setHierarchy(value);}).catch(()=>{});return()=>{active=false;};},[status?.revision]);
   useEffect(()=>{
@@ -565,11 +597,6 @@ function App() {
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, [expanded]);
-  useEffect(() => {
-    if (!notice) return;
-    const t = setTimeout(() => setNotice(""), 5000);
-    return () => clearTimeout(t);
-  }, [notice]);
   const reset = () => {
     setExpression("");
     setGeo(emptyGeo);
@@ -589,20 +616,25 @@ function App() {
     setAlbums((old) => old.filter((a) => !a.startsWith(phone + "\x1f")));
   };
   const viewerKey=(id:string)=>query().toString()+":"+revision+":"+id;
-  const loadNeighborhood=async(id:string)=>{
+  const loadNeighborhood=(id:string)=>{
+    const key=viewerKey(id),cached=viewerNeighbors.current.get(key);if(cached)return Promise.resolve(cached);
+    const running=neighborhoodRequests.current.get(key);if(running)return running;
     const search=query().toString(),prefix=search+":"+revision+":";
-    const near=await api<ViewerNeighbors>("/media/"+id+"/neighbors?"+search);
-    for(const row of near.window||[])viewerNeighbors.current.set(prefix+row.id,{...row,window:near.window});
-    while(viewerNeighbors.current.size>24)viewerNeighbors.current.delete(viewerNeighbors.current.keys().next().value!);
-    return near;
+    const pending=api<ViewerNeighbors>("/media/"+id+"/neighbors?"+search).then(near=>{
+      for(const row of near.window||[])viewerNeighbors.current.set(prefix+row.id,{...row,window:near.window});
+      while(viewerNeighbors.current.size>24)viewerNeighbors.current.delete(viewerNeighbors.current.keys().next().value!);
+      return near;
+    }).finally(()=>neighborhoodRequests.current.delete(key));
+    neighborhoodRequests.current.set(key,pending);return pending;
   };
   const loadViewer=(id:string)=>{
     const key=viewerKey(id),cached=viewerCache.current.get(key);if(cached)return cached;
     // Start decoding immediately, independently of metadata and navigation queries.
     const image=new Image();image.src=thumb(id,"large");viewerImages.current.set(key,image);
-    const pending=Promise.all([api<Detail>("/media/"+id),viewerNeighbors.current.get(key)||loadNeighborhood(id),image.decode().catch(()=>{})]).then(([media,near])=>({media,near})).catch(error=>{viewerCache.current.delete(key);viewerImages.current.delete(key);throw error;});
+    void image.decode().catch(()=>{});
+    const pending=api<Detail>("/media/"+id).then(media=>{viewerDetails.current.set(key,media);return media;}).catch(error=>{viewerCache.current.delete(key);viewerImages.current.delete(key);throw error;});
     viewerCache.current.set(key,pending);
-    while(viewerCache.current.size>9){const oldest=viewerCache.current.keys().next().value!;viewerCache.current.delete(oldest);viewerImages.current.delete(oldest);}
+    while(viewerCache.current.size>9){const oldest=viewerCache.current.keys().next().value!;viewerCache.current.delete(oldest);viewerImages.current.delete(oldest);viewerDetails.current.delete(oldest);}
     return pending;
   };
   useEffect(()=>{
@@ -620,15 +652,27 @@ function App() {
     void buffer().catch(()=>{});return()=>{active=false;};
   },[detail?.id,revision,status?.revision]);
   const open = async (id: string, swiped = false) => {
-    const sequence=++viewerSequence.current;setViewerBusy(true);
+    const sequence=++viewerSequence.current,key=viewerKey(id);
     const direction=detail?(id===neighbors.previous?"previous":"next"):"none";
-    try {
-      const {media,near}=await loadViewer(id);
-      if(sequence!==viewerSequence.current)return false;
+    const index=items.findIndex(item=>item.id===id),item=items[index];
+    const known=viewerDetails.current.get(key)||(item?{...item,metadata:{},faces:[]}:null);
+    const display=(media:Detail)=>{
       if(!detail)setExpanded(false);
       setSlideDirection(swiped?"none":direction);setDepartingImage(detail&&!swiped?(expanded&&detail.kind==="photo"?"/api/media/"+detail.id+"/display-original":thumb(detail.id,"large")):"");
-      setEditingFace(false);setPreview("");setDetail(media);setNeighbors(near);return true;
-    } catch(e){if(sequence===viewerSequence.current)setError(String(e));return false;}
+      setEditingFace(false);setEditingMetadata(false);setPreview("");setDetail(media);
+      setNeighbors(viewerNeighbors.current.get(key)||{previous:items[index-1]?.id||null,next:index>=0?items[index+1]?.id||null:null,position:index>=0?index+1:null,total});
+      setViewerBusy(false);
+    };
+    if(known)display(known);else setViewerBusy(true);
+    // Navigation ranking and metadata enrichment never hold a visible image hostage.
+    void loadNeighborhood(id).then(near=>{if(sequence===viewerSequence.current)setNeighbors(near);}).catch(()=>{});
+    const details=loadViewer(id);
+    if(known){
+      void details.then(media=>{if(sequence===viewerSequence.current)setDetail(media);}).catch(error=>{if(sequence===viewerSequence.current)setError(String(error));});
+      return true;
+    }
+    try{const media=await details;if(sequence!==viewerSequence.current)return false;display(media);return true;}
+    catch(error){if(sequence===viewerSequence.current)setError(String(error));return false;}
     finally{if(sequence===viewerSequence.current)setViewerBusy(false);}
   };
   const reviewSuggestion = async (
@@ -834,6 +878,18 @@ function App() {
     if(favicon)favicon.href="/brand/dahan-"+(["sage","ocean","plum","black","dark"].includes(theme)?theme:"sage")+"-v2.svg";
     try {localStorage.setItem("dahan.theme", theme);} catch {}
   }, [theme]);
+  useEffect(()=>{try{localStorage.setItem('dahan.view.'+profile.id,view);localStorage.setItem('dahan.order.'+profile.id,order);localStorage.setItem('dahan.sort.'+profile.id,sortBy);}catch{}},[profile.id,view,order,sortBy]);
+  const [profileSaveError,setProfileSaveError]=useState("");
+  const savedPreferenceKey=useRef("");
+  const profileSourceIds=Array.from(new Set(sources.filter(s=>scope.includes(s.phone)).map(s=>s.source_id||"legacy:"+s.phone))).sort();
+  const profilePreferenceKey=JSON.stringify([theme,profileSourceIds,[...scope].sort()]);
+  useEffect(()=>{
+    if(!sourcesReady||savedPreferenceKey.current===profilePreferenceKey)return;
+    savedPreferenceKey.current=profilePreferenceKey;
+    let active=true;
+    void saveProfilePreferences(profile.id,theme,profileSourceIds,scope).then(()=>{if(active)setProfileSaveError("");}).catch(()=>{savedPreferenceKey.current="";if(active)setProfileSaveError("Profile preferences could not be saved. Please check your connection and change the preference again to retry.");});
+    return()=>{active=false;};
+  },[sourcesReady,profilePreferenceKey,profile.id]);
   const loadMore = async () => {
     if (loadingMore.current || loading || items.length >= total) return;
     loadingMore.current = true;
@@ -859,16 +915,15 @@ function App() {
     if(!gallery||!mobile||page!=="library"||settingsOpen)return;
     const onScroll=(event:Event)=>{
       const pane=event.currentTarget as HTMLElement;
-      const small=window.matchMedia("(max-width:760px)").matches;
-      if(pane!==(small?mobile:gallery))return;
-      if(small)setBackToSearch(pane.scrollTop>240);
+      if(pane!==mobile)return;
+
       if(!loading&&!moreError&&pane.scrollHeight-pane.scrollTop-pane.clientHeight<700)void loadMore();
     };
     gallery.addEventListener("scroll",onScroll,{passive:true});mobile.addEventListener("scroll",onScroll,{passive:true});
     return()=>{gallery.removeEventListener("scroll",onScroll);mobile.removeEventListener("scroll",onScroll);};
   },[items.length,total,loading,moreError,page,settingsOpen]);
   useEffect(()=>{
-    setMoreError("");setBackToSearch(false);
+    setMoreError("");
     for(const selector of [".unified-gallery-scroll","main.library-workspace-page"]){const pane=document.querySelector<HTMLElement>(selector);if(pane)pane.scrollTop=0;}
   },[scope,albums,databaseScope,includeChildren,sourceScope,albumScope,kind,start,end,q,expression,order,geo,hideFormatDuplicates]);
   useEffect(()=>{setSelectedMedia([]);},[scope,albums,databaseScope,includeChildren,sourceScope,albumScope,kind,start,end,q,expression,geo]);
@@ -1011,17 +1066,20 @@ function App() {
         </div>
       </aside>
       <main className={!settingsOpen && page === "library" ? "library-workspace-page" : ""} inert={sheet || !!detail}>
-        <header className="topbar">
-          <span className="mobile-brand-logo photo-brand-mark" role="img" aria-label="Dahan" />
-          <label className="theme-picker">Theme <select aria-label="Color theme" value={theme} onChange={(e) => setTheme(e.target.value)}><option value="sage">Sage</option><option value="ocean">Ocean</option><option value="plum">Plum</option><option value="black">Black</option><option value="dark">Dark</option></select></label>
-          <span className="breadcrumb">
-            Your family / {settingsOpen ? "Library tools" : page === "library" ? "Library" : "People"}
-          </span>
-          <span className="sample-badge">
-            <span />
-            {(status?.total || 0).toLocaleString()} files
-          </span>
+        <header className="topbar library-topbar">
+          <h1>{settingsOpen ? "Library tools" : page === "library" ? "Library" : "People"}</h1>
+          <div className="library-topbar-actions">
+            {page==="library"&&!settingsOpen&&<button className="outline library-options-toggle" aria-label="View options" aria-expanded={displayOptionsOpen} aria-controls="library-view-options" onClick={()=>setDisplayOptionsOpen(v=>!v)}><SlidersHorizontal size={18}/></button>}
+            <button className="outline library-search-toggle" aria-label="Search library" aria-expanded={searchOpen && page==='library' && !settingsOpen} aria-controls="library-search-tools" onClick={()=>{setSettingsOpen(false);setPage('library');setSearchOpen(true);requestAnimationFrame(()=>{document.querySelector('main.library-workspace-page')?.scrollTo({top:0});document.querySelector<HTMLInputElement>('[aria-label="Search photos"]')?.focus();});}}><Search size={18}/><span>Search</span></button>
+            <LibraryNotifications profileId={profile.id} noticeKey={peopleOperation ? JSON.stringify([peopleOperation.id,peopleOperation.state,peopleOperation.error,peopleOperation.result]) : approvingAll ? 'approving' : ''} title={peopleOperation?.phase || 'Saving assignments'}>
+              <PeopleProgress persistent onReview={()=>{setSettingsOpen(false);setPage("people");setGroup(null);setReviewPerson("");setReviewFocus(null);setReviewOptionsOpen(true);requestAnimationFrame(()=>{const target=document.querySelector<HTMLElement>(peopleOperation?.kind==='calibrate'?'.matching-quality':'.people-review-tools');if(target instanceof HTMLDetailsElement)target.open=true;target?.scrollIntoView({block:'start'});});}} operation={peopleOperation} approving={approvingAll} approvalCount={approvalCount} connection={peopleProgressError} onRetry={()=>reevaluatePeople()} retryDisabled={busy||!!savingReviews.length} onCancel={async()=>{if(peopleOperation)try{await api("/people/operations/"+peopleOperation.id+"/cancel",{});}catch(e){setError(String(e));throw e;}}}/>
+            </LibraryNotifications>
+            <details className="library-appearance"><summary aria-label="Appearance" title="Appearance">⋯</summary>          <div className="appearance-panel"><button className="appearance-close" aria-label="Close menu" onClick={e=>{const menu=e.currentTarget.closest('details');if(menu){menu.open=false;menu.querySelector<HTMLElement>('summary')?.focus();}}}>Close <X size={14}/></button><label className="theme-picker">Theme <select aria-label="Color theme" value={theme} onChange={(e) => setTheme(e.target.value)}><option value="sage">Sage</option><option value="ocean">Ocean</option><option value="plum">Plum</option><option value="black">Black</option><option value="dark">Dark</option></select></label>{page==="library"&&!settingsOpen&&<button onClick={e=>{setSelectingMedia(true);const menu=e.currentTarget.closest('details');if(menu)menu.open=false;}}>Select photos &amp; videos</button>}</div></details>
+            <button className="outline profile-switch" onClick={onSwitchProfile} title="Account settings">{profile.name}<span className="account-label"> · Account</span></button>
+          </div>
+          {page==="library"&&!settingsOpen&&<div id="library-view-options" className={"library-filter-slot"+(displayOptionsOpen?" options-open":"")} ref={setHeaderControls}/>}
         </header>
+        {profileSaveError&&<div className="profile-save-error" role="alert">{profileSaveError}</div>}
         {liveSync && (liveSync.running || ["paused","cancelled","interrupted"].includes(liveSync.runs[0]?.state)) && <section className="live-sync" aria-label="Library sync"><strong>Sync · {liveSync.runs[0]?.state}</strong><span>{liveSync.runs[0]?.progress.phase} · {(status?.counts.ready||0).toLocaleString()} viewable</span><button onClick={()=>{window.location.hash="tools/sync";setSettingsOpen(true);}}>Sync controls</button>{liveSync.runs[0]?.progress.live_added!==undefined&&<span>{liveSync.runs[0].progress.live_added!.toLocaleString()} new items · {(liveSync.runs[0].progress.previews_published||0).toLocaleString()} previews processed</span>}{liveSync.runs[0]?.progress.database_id&&databaseChoices.some(([id])=>id===liveSync.runs[0].progress.database_id)&&<button onClick={()=>{reset();setDatabaseScope(liveSync.runs[0].progress.database_id!);setSourceScope("");setAlbumScope("");setPage("library");setSettingsOpen(false);}}>View importing Database</button>}<small>{liveSync.running?"New previews appear while scanning. Face recognition follows preview publishing.":"Progress is saved. Resume from Library tools when ready."}</small></section>}
         {!liveSync?.runs.length && status?.scan && (
           <section className="scan-progress" aria-label="Full library scan">
@@ -1083,7 +1141,7 @@ function App() {
             {status.scan.error && <p role="alert">{status.scan.error}</p>}
           </section>
         )}
-        <PeopleProgress operation={peopleOperation} approving={approvingAll} approvalCount={approvalCount} connection={peopleProgressError} onRetry={()=>reevaluatePeople()} retryDisabled={busy||!!savingReviews.length} onCancel={async()=>{if(peopleOperation)try{await api("/people/operations/"+peopleOperation.id+"/cancel",{});}catch(e){setError(String(e));throw e;}}}/>
+        {page === "people" && !settingsOpen && <PeopleProgress onReview={()=>{setSettingsOpen(false);setPage("people");setGroup(null);setReviewPerson("");setReviewFocus(null);setReviewOptionsOpen(true);requestAnimationFrame(()=>{const target=document.querySelector<HTMLElement>(peopleOperation?.kind==='calibrate'?'.matching-quality':'.people-review-tools');if(target instanceof HTMLDetailsElement)target.open=true;target?.scrollIntoView({block:'start'});});}} operation={peopleOperation} approving={approvingAll} approvalCount={approvalCount} connection={peopleProgressError} onRetry={()=>reevaluatePeople()} retryDisabled={busy||!!savingReviews.length} onCancel={async()=>{if(peopleOperation)try{await api("/people/operations/"+peopleOperation.id+"/cancel",{});}catch(e){setError(String(e));throw e;}}}/>}
         {connectionError && <div role="alert" className="error">{connectionError} Retrying automatically…</div>}
         {error && (
           <div role="alert" className="error">
@@ -1095,35 +1153,19 @@ function App() {
         )}
         {settingsOpen ? <SyncSettings onBrowseAlbum={(databaseId,sourceId,albumId)=>{setDatabaseScope(databaseId);setIncludeChildren(false);setSourceScope(sourceId);setAlbums([]);setAlbumScope(albumId);setSettingsOpen(false);setPage("library");setResultsLoading(true);}} onPeopleChanged={()=>setRevision(v=>v+1)} onClose={() => setSettingsOpen(false)} hideFormatDuplicates={hideFormatDuplicates} onHideFormatDuplicates={setHideFormatDuplicates} /> : page === "library" ? (
           <>
-            {backToSearch&&<button className="back-to-search" onClick={()=>{const pane=document.querySelector<HTMLElement>("main.library-workspace-page");pane?.scrollTo({top:0,behavior:window.matchMedia("(prefers-reduced-motion:reduce)").matches?"auto":"smooth"});}}>↑ Back to search</button>}
-            <div className="sync-fields" aria-label="Database and Source filters">
-              <label>Database<select aria-label="Database" value={databaseScope} onChange={e=>{setDatabaseScope(e.target.value);setIncludeChildren(false);setSourceScope("");setAlbums([]);setAlbumScope("");setResultsLoading(true);}}><option value="">All visible Databases</option>{databaseChoices.map(([id,name])=><option key={id} value={id}>{name}</option>)}</select></label>{databaseScope&&hierarchy.databases.some(d=>d.parent_id===databaseScope)&&<label className="library-children-toggle"><input type="checkbox" checked={includeChildren} onChange={e=>{setIncludeChildren(e.target.checked);setSourceScope("");setAlbumScope("");setResultsLoading(true);}}/>Include child Databases</label>}
-              <label>Source<select aria-label="Source" value={sourceScope} onChange={e=>{setSourceScope(e.target.value);setAlbums([]);setAlbumScope("");setResultsLoading(true);}}><option value="">All Sources in scope</option><optgroup label="Folder Sources">{sourceChoices.map(([id,name])=><option key={id} value={id}>{name}</option>)}</optgroup>{hierarchy.linked_sources.some(g=>g.visible)&&<optgroup label="Linked Sources">{hierarchy.linked_sources.filter(g=>g.visible&&(!databaseScope||g.members.some(m=>databaseFamily.has(m.database_id)))).map(g=><option key={g.id} value={"linked:"+g.id}>{g.alias}</option>)}</optgroup>}</select></label>
-            </div>
-            {albumScope&&<p className="library-album-scope">Album: <strong>{sources.find(s=>s.album_id===albumScope)?.album||"Selected Album"}</strong> <button onClick={()=>setAlbumScope("")}>Show all Albums</button></p>}
-            <UnifiedSearch sourceSelection={scope} onSourceChange={(selected)=>{setResultsLoading(true);setScope(selected);}} resultsLoading={resultsLoading} people={people} sources={sources} expression={expression} query={query().toString()} onApply={(value) => {
+            {(albumScope||sourceScope||databaseScope)&&<p className="library-album-scope">Browsing {albumScope?(sources.find(s=>s.album_id===albumScope)?.album||'selected album'):'selected source'} <button onClick={()=>{setAlbumScope('');setSourceScope('');setDatabaseScope('');setIncludeChildren(false);setScope(phoneNames);setAlbums([]);}}>Show all my sources</button></p>}
+            <UnifiedSearch onSearchComplete={()=>{setSearchOpen(false);setDisplayOptionsOpen(false);requestAnimationFrame(()=>{document.querySelector('main.library-workspace-page')?.scrollTo({top:0});const gallery=document.querySelector<HTMLElement>('.unified-gallery-scroll');gallery?.focus({preventScroll:true});});}} searchOpen={searchOpen} onCloseSearch={()=>{setSearchOpen(false);document.querySelector<HTMLButtonElement>('[aria-label="Search library"]')?.focus();}} sourceSelection={scope} onSourceChange={(selected)=>{setDatabaseScope("");setSourceScope("");setIncludeChildren(false);setAlbumScope("");setAlbums([]);setResultsLoading(true);setScope(selected);}} resultsLoading={resultsLoading} people={people} sources={sources} expression={expression} query={query().toString()} onApply={(value) => {
+              void recordProfileSearch(profile.id,value,scope).catch(()=>setProfileSaveError("Your search ran, but its history could not be saved."));
               setResultsLoading(true);
-              if(!value.trim())setScope(phoneNames);setAlbums([]);setAlbumScope("");setGeo(emptyGeo);setQ("");setPeopleFilter([]);setStart("");setEnd("");setKind("");setOrientation("");setExpression(value);
+              setAlbums([]);setAlbumScope("");setGeo(emptyGeo);setQ("");setPeopleFilter([]);setStart("");setEnd("");setKind("");setOrientation("");setExpression(value);
             }}>
-              {(mediaControl)=><>
-              <div className="gallery-controls" aria-label="Gallery display controls">
-              <div
-                className="date-scale"
-                role="group"
-                aria-label="Timeline grouping"
-              >
-                {["years", "months", "days", "all"].map((v) => (
-                  <button
-                    key={v}
-                    className={view === v ? "chosen" : ""}
-                    onClick={() => setView(v)}
-                  >
-                    {v === "all" ? "All" : v[0].toUpperCase() + v.slice(1)}
-                  </button>
-                ))}
-              </div>
+              {(mediaControl,sourceControl)=><>
+              {headerControls&&createPortal(<div className="gallery-controls" aria-label="Gallery display controls">
+              <div className="library-options-heading"><strong>View options</strong><button onClick={()=>{setDisplayOptionsOpen(false);document.querySelector<HTMLButtonElement>('.library-options-toggle')?.focus();}}>Done</button></div>
+              {sourceControl}
+              <select aria-label="Timeline grouping" value={view} onChange={e=>setView(e.target.value)}>{['years','months','days','all'].map(v=><option key={v} value={v}>{v==='all'?'All photos':v[0].toUpperCase()+v.slice(1)}</option>)}</select>
               {mediaControl}
-              <select className="gallery-media-filter gallery-sort-basis" aria-label="Gallery sort basis" title="Sort by" value={sortBy} onChange={e=>setSortBy(e.target.value)}><option value="capture">Sort by: Capture date</option><option value="file">Sort by: File date</option></select>
+              <details className="library-sort-options"><summary>Sort options</summary><div className="library-sort-menu"><select className="gallery-media-filter gallery-sort-basis" aria-label="Gallery sort basis" title="Sort by" value={sortBy} onChange={e=>setSortBy(e.target.value)}><option value="capture">Sort by: Capture date</option><option value="file">Sort by: File date</option></select>
               <label className="sort-control">
                 <span className="sort-label">Date order</span>
                 <select
@@ -1134,18 +1176,15 @@ function App() {
                   <option value="desc">Newest first</option>
                   <option value="asc">Oldest first</option>
                 </select>
-              </label>
+              </label></div></details>
                 <span className="result-count" aria-live="polite">
                   {total.toLocaleString()} moments
                 </span>
-              </div>
-              <MetadataTools query={query().toString()} selected={selectedMedia} selecting={selectingMedia} onSelecting={setSelectingMedia} onSelectLoaded={()=>setSelectedMedia(items.map(m=>m.id))} onClear={()=>setSelectedMedia([])} count={total} revision={revision} onSaved={metadataSaved}/>
+              </div>,headerControls)}
+              <MetadataTools query={query().toString()} selected={selectedMedia} selecting={selectingMedia} onSelecting={value=>{setSelectingMedia(value);if(!value)setSelectedMedia([]);}} onSelectLoaded={()=>setSelectedMedia(items.map(m=>m.id))} onClear={()=>setSelectedMedia([])} count={total} revision={revision} onSaved={metadataSaved}/>
               {sortBy==='file'&&<p className="metadata-note">Sorting by filesystem timestamp. Timeline groups still describe capture dates; missing capture dates stay unknown.</p>}
               {loading && !items.length ? (
-                <div className="empty">
-                  <LoaderCircle className="spin" />
-                  Loading your moments…
-                </div>
+                <div className="gallery-loading-space" aria-hidden="true"/>
               ) : !items.length ? (
                 <div className="empty">
                   <Images size={36} />
@@ -1787,7 +1826,7 @@ function App() {
                   <Smartphone size={17} />
                   Sources
                 </h3>
-                <p>Select Sources here, or choose a Database and Source above the search.</p>
+                <p>Select sources to browse in your Library.</p>
                 {phoneNames.map((phone) => (
                   <label className="check-row" key={phone}>
                     <input
@@ -1975,7 +2014,7 @@ function App() {
                 />
               ) : <MediaViewerStage key={detail.id} id={detail.id} name={detail.name} width={detail.width||1} height={detail.height||1} imageUrl={thumb(detail.id,"large")} direction={slideDirection} departingImage={departingImage} onClose={closeViewer} onEditFaces={()=>{collapseViewer();setEditingFace(true);}} videoUrl={preview} kind={detail.kind} expanded={expanded} onToggleExpanded={toggleExpanded} {...neighbors} busy={viewerBusy} onNavigate={open}/>}
             </div>
-            <aside className="viewer-info">
+            <MediaInfoSheet key={detail.id}>
               <span className="eyebrow">
                 {detail.kind === "video" ? "VIDEO" : "PHOTOGRAPH"}
               </span>
@@ -2060,7 +2099,7 @@ function App() {
               )}
               <a
                 className="outline"
-                href={"/api/media/" + detail.id + "/original"}
+                href={exportUrl(detail.id,"original")}
                 onClick={event=>{if(isIOSStandalone()){event.preventDefault();window.dispatchEvent(new CustomEvent("dahan:save-original",{detail:{id:detail.id}}));}}}
                 target="_blank"
                 rel="noreferrer"
@@ -2098,22 +2137,22 @@ function App() {
                 <summary>Embedded metadata</summary>
                 <pre>{JSON.stringify(detail.metadata, null, 2)}</pre>
               </details>
-            </aside>
+            </MediaInfoSheet>
           </section>
         </div>
       )}
       <AppUpdates canReload={!detail && !settingsOpen && !busy && !peopleWorking && !approvingAll && page === "library"} />
       {notice && (
-        <div role="status" className="toast">
+        <SystemNotice noticeKey={notice} className="toast" onDismiss={()=>setNotice("")}><span role="status">
           <Check size={17} />
           {notice}
-        </div>
+        </span></SystemNotice>
       )}
     </div>
   );
 }
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <App />
+    <ProfileShell>{(profile,switchProfile)=><App key={profile.id} profile={profile} onSwitchProfile={switchProfile}/>}</ProfileShell>
   </React.StrictMode>,
 );

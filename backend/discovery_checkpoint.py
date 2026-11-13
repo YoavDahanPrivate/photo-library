@@ -1,12 +1,13 @@
 """Durable directory snapshots and bounded, replayable publication batches.
 
 Only sync.sqlite is written. Originals are never altered. Completed folders
-belong to this scan's snapshot; a later Sync now discovers subsequent changes.
+belong to this scan's snapshot; a later Sync discovers subsequent changes.
 """
 import hashlib
 import json
 import os
 from pathlib import Path
+from . import folder_cache
 
 
 SCHEMA = """
@@ -23,7 +24,7 @@ CREATE TABLE IF NOT EXISTS discovery_folders(
 CREATE TABLE IF NOT EXISTS discovery_files(
  run_id TEXT NOT NULL,database_id TEXT NOT NULL,path TEXT NOT NULL,entry TEXT NOT NULL,
  PRIMARY KEY(run_id,database_id,path));
-"""
+""" + folder_cache.SCHEMA
 
 
 def manifest(roots):
@@ -47,8 +48,10 @@ def manifest(roots):
 
 
 class DiscoveryCheckpoint:
-    def __init__(self, run_id):
+    def __init__(self, run_id, mode="full"):
         self.run_id = run_id
+        self.mode = mode
+        self.folders_reused = self.folders_read = self.files_reused = 0
         self.clean_resume = False
         self.resumed = False
         self.invalidated = False
@@ -77,6 +80,8 @@ class DiscoveryCheckpoint:
                                 'AND snapshot IS NOT NULL', (self.run_id,)).fetchone()[0]
             found = c.execute('SELECT coalesce(sum(media_count),0) FROM discovery_folders '
                               'WHERE run_id=?', (self.run_id,)).fetchone()[0]
+            counts = c.execute("SELECT coalesce(sum(cached_files IS NOT NULL),0),coalesce(sum(cached_files IS NULL),0),coalesce(sum(json_array_length(cached_files)),0) FROM discovery_cache_state WHERE run_id=?", (self.run_id,)).fetchone()
+            self.folders_reused, self.folders_read, self.files_reused = tuple(counts)
         return folders, found
 
     def valid_for(self, roots):
@@ -95,7 +100,7 @@ class DiscoveryCheckpoint:
                       (self.run_id,))
 
     def _discard(self, c):
-        for table in ('discovery_files', 'discovery_folders', 'discovery_roots', 'discovery_sessions'):
+        for table in ('discovery_cache_state', 'discovery_files', 'discovery_folders', 'discovery_roots', 'discovery_sessions'):
             c.execute(f'DELETE FROM {table} WHERE run_id=?', (self.run_id,))
 
     def discard(self):
@@ -146,6 +151,7 @@ class DiscoveryCheckpoint:
         from . import sync_service as sync
         root, did = Path(database['root']), database['id']
         key = (self.run_id, did)
+        signature = 'directory-v1:' + manifest([database])
         while True:
             control()
             with sync.store() as c:
@@ -160,8 +166,21 @@ class DiscoveryCheckpoint:
             if row['snapshot'] is None:
                 # Finish and commit this directory listing before honoring a
                 # clean pause. A crash can repeat only this uncertain listing.
-                dirs, names = self.list_directory(directory, root, exclusions)
+                before = folder_cache.stamp(directory)
                 with sync.store() as c:
+                    cached = folder_cache.load(c, did, row['relative'], signature, before) if self.mode == 'sync' else None
+                if cached is not None:
+                    dirs, cached_files = cached
+                    names = [Path(entry['relative']).name for entry in cached_files]
+                    self.folders_reused += 1
+                    self.files_reused += len(cached_files)
+                else:
+                    dirs, names = self.list_directory(directory, root, exclusions)
+                    cached_files = None
+                    self.folders_read += 1
+                with sync.store() as c:
+                    c.execute('INSERT OR REPLACE INTO discovery_cache_state VALUES(?,?,?,?,?,?)',
+                              (*folder_key, before, json.dumps(dirs), json.dumps(cached_files) if cached_files is not None else None))
                     c.execute('UPDATE discovery_folders SET snapshot=? WHERE run_id=? '
                               'AND database_id=? AND relative=?', (json.dumps(names), *folder_key))
                     c.executemany('INSERT OR IGNORE INTO discovery_folders '
@@ -170,13 +189,17 @@ class DiscoveryCheckpoint:
                 progress(folders_delta=1)
             else:
                 names = json.loads(row['snapshot'])
+            with sync.store() as c:
+                listing = c.execute('SELECT cached_files FROM discovery_cache_state WHERE run_id=? AND database_id=? AND relative=?', folder_key).fetchone()
+            cached_files = json.loads(listing['cached_files']) if listing and listing['cached_files'] is not None else None
+            progress(folders_reused=self.folders_reused, folders_read=self.folders_read, file_metadata_reused=self.files_reused)
             cursor = row['cursor']
             while cursor < len(names):
                 control()
                 end = min(cursor + 50, len(names))
                 batch = json.loads(row['batch']) if row['batch'] else None
                 if batch is None or not self.clean_resume:
-                    batch = self.metadata(root, directory, names[cursor:end])
+                    batch = cached_files[cursor:end] if cached_files is not None and (not self.resumed or self.clean_resume) else self.metadata(root, directory, names[cursor:end])
                     with sync.store() as c:
                         c.execute('UPDATE discovery_folders SET batch=? WHERE run_id=? '
                                   'AND database_id=? AND relative=?', (json.dumps(batch), *folder_key))
@@ -194,11 +217,14 @@ class DiscoveryCheckpoint:
                 progress(media_delta=len(batch))
                 cursor = end
                 row = dict(row, batch=None)
+            after = folder_cache.stamp(directory)
             with sync.store() as c:
+                folder_cache.publish(c, self.run_id, did, row['relative'], root, names, signature, after)
                 c.execute('UPDATE discovery_folders SET done=1 WHERE run_id=? AND database_id=? '
                           'AND relative=?', folder_key)
         self.check_directory(root, root)
         with sync.store() as c:
             c.execute('UPDATE discovery_roots SET complete=1 WHERE run_id=? AND database_id=?', key)
+            c.execute('DELETE FROM sync_folder_cache WHERE database_id=? AND relative NOT IN (SELECT relative FROM discovery_folders WHERE run_id=? AND database_id=?)', (did, *key))
             return {r['path']: json.loads(r['entry']) for r in c.execute(
                 'SELECT path,entry FROM discovery_files WHERE run_id=? AND database_id=? ORDER BY path', key)}

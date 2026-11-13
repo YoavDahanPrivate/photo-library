@@ -1,12 +1,13 @@
 """User supplied photo regions, using cached oriented previews only."""
 
+import io
 import json
 import uuid
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, model_validator
 from PIL import Image
 from .core import db
-from . import core
+from . import core, cache_images
 
 router = APIRouter(prefix="/api/media")
 
@@ -75,7 +76,10 @@ def save_face(identity: str, body: FaceRegion):
     if media["kind"] != "photo":
         raise HTTPException(422, "Manual face boxes currently support photos only")
     try:
-        with Image.open(core.DATA / "thumbs" / f"{identity}-large.jpg") as image:
+        data = cache_images.read(f"thumbs/{identity}-large.jpg")
+        if data is None:
+            raise FileNotFoundError("Cached photo preview not found")
+        with Image.open(io.BytesIO(data)) as image:
             width, height = image.size
             x, y = round(body.x * width), round(body.y * height)
             right, bottom = min(width, round((body.x + body.width) * width)), min(
@@ -90,7 +94,7 @@ def save_face(identity: str, body: FaceRegion):
         raise HTTPException(409, "The cached photo preview is unavailable") from error
     embedding = signature(crop)
     fid = uuid.uuid4().hex
-    destination = core.DATA / "faces" / f"{fid}.jpg"
+    destination = cache_images.write_path(f"faces/{fid}.jpg")
     try:
         with db() as c:
             c.execute("BEGIN IMMEDIATE")

@@ -1,3 +1,4 @@
+import {Info} from "lucide-react";
 import {captureLabel,type MetadataInfo} from "./MetadataTools";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 const visibilityCallbacks = new Map<Element, (visible:boolean) => void>();
@@ -143,7 +144,7 @@ export default function MediaCard({
           ) : null}
         </span>
       </button>
-      <div className="mobile-tile-info"><button className="tile-info-toggle" aria-label={"Photo information for "+m.name} aria-expanded={showInfo} onClick={()=>setShowInfo(v=>!v)}>ⓘ <span>{m.phone}</span>{!!m.people_names?.length&&<small> · {m.people_names.length} people</small>}</button>{showInfo&&<div className="tile-info-details"><strong>{m.name}</strong><span>{captureLabel(m)}</span><span>{m.location_label||[m.city,m.country].filter(Boolean).join(", ")||"Location unknown"}</span><span>{m.people_names?.join(", ")||"No named faces"}</span><button onClick={onOpen}>Open details</button></div>}</div>
+      <div className="mobile-tile-info"><button className="tile-info-toggle" aria-label={"Photo information for "+m.name} aria-expanded={showInfo} onClick={()=>setShowInfo(v=>!v)}><Info size={13} strokeWidth={1.7}/></button>{showInfo&&<div className="tile-info-details"><strong>{m.name}</strong><span>{captureLabel(m)}</span><span>{m.location_label||[m.city,m.country].filter(Boolean).join(", ")||"Location unknown"}</span><span>{m.people_names?.join(", ")||"No named faces"}</span><button onClick={onOpen}>Open details</button></div>}</div>
       {m.kind === "video" && (
         <div className="video-preview-action">
           <button

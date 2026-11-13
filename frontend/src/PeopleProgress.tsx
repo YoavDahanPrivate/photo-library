@@ -1,3 +1,4 @@
+import SystemNotice from './SystemNotice';
 import React,{useEffect,useState} from 'react';
 import {LoaderCircle,CheckCircle2,AlertCircle,Square} from 'lucide-react';
 
@@ -8,7 +9,7 @@ function duration(seconds:number){
   return value<60?`${value}s`:`${Math.floor(value/60)}m ${value%60}s`;
 }
 
-export default function PeopleProgress({operation,approving,approvalCount,connection,onCancel,onRetry,retryDisabled}:{operation:PeopleOperation|null;approving:boolean;approvalCount:number;connection:string;onCancel:()=>Promise<void>;onRetry?:()=>Promise<void>;retryDisabled?:boolean}){
+export default function PeopleProgress({persistent=false,operation,approving,approvalCount,connection,onCancel,onRetry,retryDisabled,onReview}:{persistent?:boolean;operation:PeopleOperation|null;approving:boolean;approvalCount:number;connection:string;onCancel:()=>Promise<void>;onRetry?:()=>Promise<void>;retryDisabled?:boolean;onReview?:()=>void}){
   const [now,setNow]=useState(()=>Date.now()/1000);
   const [approvalStarted,setApprovalStarted]=useState(()=>Date.now()/1000);
   const [cancelling,setCancelling]=useState(false);
@@ -32,7 +33,7 @@ export default function PeopleProgress({operation,approving,approvalCount,connec
     stopping?'Stopping at a safe point. Completed approvals will stay saved.':automatic?'Approve high-confidence matches → reevaluate → repeat. You can keep browsing.':'Reevaluation is running in the background. You can keep browsing.':
     automatic?operation?.state==='completed'?'No more high-confidence matches remain in the visible library. Lower-confidence matches are left for review.':'Stopped. Completed approvals are saved; unapproved matches remain for review.':
     operation?.state==='completed'?`${operation.result?.suggestions?.toLocaleString()||0} matches ready for review. No faces assigned automatically.${operation.result?.rejection_suppressed?` ${operation.result.rejection_suppressed.toLocaleString()} lookalike suggestions withheld using your rejections.`:''}${operation.result?.rejection_softened?` ${operation.result.rejection_softened.toLocaleString()} matches kept in lower confidence because of rejected lookalikes.`:''}${operation.result?.rejection_conflicts?` ${operation.result.rejection_conflicts.toLocaleString()} rejected examples closely overlap confirmed faces and were kept face-specific.`:''}`:'Existing assignments and previously saved suggestions are kept.'));
-  return <section className="people-operation" aria-label="Face review progress" aria-busy={approving||running}>
+  const panel=<section className="people-operation" aria-label="Face review progress" aria-busy={approving||running}>
     <div className="people-operation-heading">
       {approving||running?<LoaderCircle className="people-operation-spinner" size={21}/>:failed?<AlertCircle size={21}/>:<CheckCircle2 size={21}/>}
       <div><strong>{approving?`Saving ${approvalCount.toLocaleString()} assignments`:automatic&&running?`Auto approval · ${operation?.phase}`:operation?.phase}</strong>
@@ -40,6 +41,7 @@ export default function PeopleProgress({operation,approving,approvalCount,connec
       </div>
       <span className="people-operation-time">{duration(elapsed)} elapsed</span>
     </div>
+    {!running&&!approving&&onReview&&<button className="outline" onClick={onReview}>{calibrating?'View matching report':'Review matches'}</button>}
     {failed&&!calibrating&&onRetry&&<button className="outline" disabled={retryDisabled||approving} onClick={()=>void onRetry()}>Reevaluate matches</button>}
     {automatic&&!approving&&<div className="people-auto-totals">
       <strong>{(operation?.approved_total||0).toLocaleString()} approved</strong>
@@ -54,4 +56,5 @@ export default function PeopleProgress({operation,approving,approvalCount,connec
       {connection?<p role="alert">{connection} Reconnecting to progress…</p>:running&&now-(operation?.updated_at||now)>10?<p className="small-note">Waiting for the worker’s next update. Reading or saving the catalogue can take longer while storage is busy.</p>:null}
     </>}
   </section>;
+  return persistent||running||approving?panel:<SystemNotice noticeKey={`${operation?.id}:${operation?.state}`}>{panel}</SystemNotice>;
 }

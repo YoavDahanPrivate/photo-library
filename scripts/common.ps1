@@ -8,7 +8,7 @@ function Import-DahanConfiguration {
     }
     if (-not (Test-Path -LiteralPath $taskConfig -PathType Leaf)) { return }
     $taskSettings = Get-Content -LiteralPath $taskConfig -Raw -Encoding UTF8 | ConvertFrom-Json
-    foreach ($taskName in @('DAHAN_DATA','DAHAN_DATABASE_DIR','DAHAN_SOURCE','DAHAN_LEGACY_SOURCES','DAHAN_LAN_ADDRESS','DAHAN_HOST_ALIASES','DAHAN_LOGS_DIR','DAHAN_BACKUP_DIR')) {
+    foreach ($taskName in @('DAHAN_DATA','DAHAN_DATABASE_DIR','DAHAN_SOURCE','DAHAN_CACHE_PACKS','DAHAN_LEGACY_SOURCES','DAHAN_LAN_ADDRESS','DAHAN_HOST_ALIASES','DAHAN_LOGS_DIR','DAHAN_BACKUP_DIR')) {
         $taskValue = $taskSettings.env.$taskName
         if ($taskValue -and -not [Environment]::GetEnvironmentVariable($taskName, 'Process')) {
             [Environment]::SetEnvironmentVariable($taskName, [string]$taskValue, 'Process')

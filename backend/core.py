@@ -53,6 +53,7 @@ def init():
         CREATE INDEX IF NOT EXISTS media_places_city ON media_places(city_id,media_id);
         CREATE TABLE IF NOT EXISTS people(id INTEGER PRIMARY KEY,name TEXT);
         CREATE TABLE IF NOT EXISTS faces(id TEXT PRIMARY KEY,media_id TEXT REFERENCES media(id),person_id INTEGER REFERENCES people(id),timestamp REAL,bbox TEXT,embedding BLOB,status TEXT DEFAULT 'suggested');
+        CREATE TABLE IF NOT EXISTS person_portraits(person_id INTEGER PRIMARY KEY REFERENCES people(id) ON DELETE CASCADE,face_id TEXT REFERENCES faces(id) ON DELETE SET NULL);
         CREATE INDEX IF NOT EXISTS faces_person ON faces(person_id);
         CREATE INDEX IF NOT EXISTS faces_media ON faces(media_id,status,person_id);
         CREATE INDEX IF NOT EXISTS media_ready_taken ON media(status,taken,id);
@@ -69,7 +70,7 @@ def init():
         CREATE TABLE IF NOT EXISTS catalogue_clock(id INTEGER PRIMARY KEY,revision INTEGER NOT NULL);
         INSERT OR IGNORE INTO catalogue_clock VALUES(1,0);
         """)
-        for table in ("media","faces","media_places"):
+        for table in ("media","faces","media_places","person_portraits"):
             for event in ("INSERT","UPDATE","DELETE"):
                 c.execute(f"CREATE TRIGGER IF NOT EXISTS clock_{table}_{event} AFTER {event} ON {table} BEGIN UPDATE catalogue_clock SET revision=revision+1 WHERE id=1; END")
 
@@ -84,6 +85,10 @@ def init():
         migrate(c)
         from .metadata_support import migrate as migrate_metadata
         migrate_metadata(c)
+        from .user_profiles import migrate as migrate_profiles
+        migrate_profiles(c)
+        from .account_auth import migrate as migrate_accounts
+        migrate_accounts(c)
 
 def original(row):
     from .source_management import source_root

@@ -1,3 +1,4 @@
+import ResultsLoadingNotice from "./ResultsLoadingNotice";
 import {withMediaFilter,selectedMediaFilter} from "./mediaFilter";
 import {searchSuggestions,acceptSuggestion,normalizeSearch,deviceKey,type SearchItem,type Suggestion} from "./searchSuggestions";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -12,6 +13,9 @@ const joinOr = (terms: string[]) =>
   terms.length ? `(${terms.join(" or ")})` : "";
 const emptyParts: Record<string, string> = {};
 export default function UnifiedSearch({
+  searchOpen,
+  onCloseSearch,
+  onSearchComplete,
   people,
   sources,
   sourceSelection,
@@ -22,6 +26,9 @@ export default function UnifiedSearch({
   resultsLoading,
   children,
 }: {
+  searchOpen: boolean;
+  onCloseSearch: ()=>void;
+  onSearchComplete: ()=>void;
   people: Person[];
   sources: Source[];
   sourceSelection: string[];
@@ -30,7 +37,7 @@ export default function UnifiedSearch({
   onApply: (value: string) => void;
   query: string;
   resultsLoading: boolean;
-  children: (mediaControl: ReactNode) => ReactNode;
+  children: (mediaControl: ReactNode, sourceControl: ReactNode) => ReactNode;
 }) {
   const [panel, setPanel] = useState("");
   const [base, setBase] = useState(expression);
@@ -235,6 +242,7 @@ export default function UnifiedSearch({
         mapCache.current.delete(query);
         onApply(value);
         if (closeMap) setPanel("");
+        if(mediaOverride===undefined){setPanel("");input.current?.blur();onSearchComplete();}
       }
     } catch (e) {
       if (attempt === version.current)
@@ -284,25 +292,8 @@ export default function UnifiedSearch({
   }, [panel]);
   return (
     <div className="unified-search-shell">
-      <header className="master-search-header">
-        <div className="page-heading">
-          <div>
-            <span className="eyebrow">ALL THE LITTLE MOMENTS</span>
-            <h1>Your library</h1>
-            <p>Find your people, places and shared memories.</p>
-          </div>
-        </div>
-        <section className="device-strip" aria-label="Search sources">
-          <strong>Search sources</strong>
-          <div className="device-buttons">
-            <button aria-pressed={phoneNames.length>0&&phoneNames.every(name=>sourceSelection.includes(name))} disabled={!phoneNames.length} onClick={()=>onSourceChange(phoneNames.every(name=>sourceSelection.includes(name))?[]:phoneNames)}>All</button>
-            {phoneNames.map(name=><button key={name} aria-pressed={sourceSelection.includes(name)} onClick={()=>onSourceChange(toggle(sourceSelection,name))}>{name}</button>)}
-          </div>
-        </section>
-        <p className="small-note master-help">
-          Source selections apply immediately. Apply search text and helper changes
-          with Enter or Search.
-        </p>
+      <header id="library-search-tools" className="master-search-header" hidden={!searchOpen} onKeyDown={e=>{if(e.key==='Escape'){setPanel('');onCloseSearch();}}}>
+        <div className="library-search-heading"><strong>Search your library</strong><button aria-label="Close search" onClick={()=>{setPanel('');onCloseSearch();}}>Close</button></div>
         <div className="master-search-row">
           <form
             onSubmit={(e) => {
@@ -318,7 +309,7 @@ export default function UnifiedSearch({
               aria-invalid={!!error}
               aria-describedby="master-search-error"
               value={draft}
-              placeholder='Person name, filename, or Includes ("Name") and Place("Italy")'
+              placeholder='Search people, places, dates or filenames'
               autoComplete="off"
               role="combobox"
               aria-autocomplete="list"
@@ -368,7 +359,9 @@ export default function UnifiedSearch({
           </p>
         )}
       </header>
-      {panel && (
+      {searchOpen && expression && <div className="library-active-search"><span>Search: {expression}</span><button onClick={()=>{editDraft('',0);}}>Clear search</button></div>}
+
+      {searchOpen && panel && (
         <section
           id="search-helper-panel"
           ref={mapDialog}
@@ -695,9 +688,9 @@ export default function UnifiedSearch({
           </div>
         </section>
       )}
-      <div className={"unified-gallery-scroll"+((resultsLoading||busy)?" results-pending":"")} aria-label="Search results" aria-busy={resultsLoading||busy}>
-        {(resultsLoading||busy) && <div className="results-loading-anchor"><div className="results-loading-banner" role="status" aria-live="polite"><span className="results-loading-spinner" aria-hidden="true"/><div><strong>{busy?"Preparing your search…":"Results loading…"}</strong><span>{busy?"Checking your search criteria":"Updating photos and videos for your search"}</span></div><div className="results-loading-progress" aria-hidden="true"/></div></div>}
-        {children(<select className="gallery-media-filter" aria-label="Show photos or videos" value={selectedMediaFilter(expression)} disabled={busy} onChange={e=>void apply(false,e.target.value)}><option value="">Photos &amp; Videos</option><option value="photo">Photos</option><option value="video">Videos</option>{selectedMediaFilter(expression)==="custom"&&<option value="custom" disabled>Custom media filter</option>}</select>)}
+      <div className={"unified-gallery-scroll"+((resultsLoading||busy)?" results-pending":"")} aria-label="Search results" tabIndex={-1} aria-busy={resultsLoading||busy}>
+        {(resultsLoading||busy) && <ResultsLoadingNotice busy={busy}/>}
+        {children(<select className="gallery-media-filter" aria-label="Show photos or videos" value={selectedMediaFilter(expression)} disabled={busy} onChange={e=>void apply(false,e.target.value)}><option value="">Photos &amp; Videos</option><option value="photo">Photos</option><option value="video">Videos</option>{selectedMediaFilter(expression)==="custom"&&<option value="custom" disabled>Custom media filter</option>}</select>, <details className="library-source-picker"><summary>{!sourceSelection.length?'No sources selected':phoneNames.every(n=>sourceSelection.includes(n))?'All my sources':sourceSelection.length===1?sourceSelection[0]:`${sourceSelection.length} sources`}</summary><div className="library-source-menu"><strong>Sources</strong><button disabled={!phoneNames.length} onClick={()=>onSourceChange(phoneNames)}>Show all my sources</button>{phoneNames.map(name=><label key={name}><input type="checkbox" checked={sourceSelection.includes(name)} onChange={()=>onSourceChange(toggle(sourceSelection,name))}/>{name}</label>)}{!phoneNames.length&&<p>No sources available yet.</p>}</div></details>)}
       </div>
     </div>
   );

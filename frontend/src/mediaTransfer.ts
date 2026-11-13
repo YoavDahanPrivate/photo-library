@@ -1,7 +1,8 @@
 import {readApiResponse} from "./ApiResponse";
+import {currentProfileId} from "./UserProfiles";
 export type ExportFormat="original"|"preview";
 export const SHARE_LIMIT=128*1024*1024;
-export const exportUrl=(id:string,format:ExportFormat)=>`/api/media/${encodeURIComponent(id)}/${format==="original"?"original?download=true":"thumbnail?size=large"}`;
+export const exportUrl=(id:string,format:ExportFormat)=>`/api/media/${encodeURIComponent(id)}/${format==="original"?"original?download=true":"thumbnail?size=large"}&activity=download&profile_id=${encodeURIComponent(currentProfileId())}`;
 export function exportName(name:string,format:ExportFormat){
   const safe=name.split(/[\\/]/).pop()?.replace(/[\u0000-\u001f]/g,"")||"Dahan media";
   return format==="original"?safe:safe.replace(/\.[^.]+$/,"")+"-preview.jpg";

@@ -7,6 +7,7 @@ param(
     [string]$BackupDirectory,
     [string]$LanAddress,
     [int]$Port,
+    [ValidateSet('127.0.0.1','0.0.0.0')][string]$BindAddress,
     [switch]$EnableSchedules,
     [switch]$SingleRun,
     [switch]$CheckOnly

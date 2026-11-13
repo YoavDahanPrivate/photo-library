@@ -34,7 +34,18 @@ def client(tmp_path, monkeypatch):
                 "INSERT INTO faces(id,media_id,person_id,bbox,embedding) VALUES(?,?,?,?,?)",
                 (fid, mid, pid, "[]", b"0000"),
             )
-    return TestClient(app.app), core
+    # Legacy catalogue tests isolate business logic from account authentication.
+    # The dedicated account suite creates fresh clients without this fixture header
+    # and exercises the real production guard (including anonymous rejection).
+    import secrets
+    token = secrets.token_hex(16)
+    original_guard = app.account_auth.guard
+    def fixture_guard(request):
+        if request.headers.get("x-dahan-fixture") == token:
+            return None
+        return original_guard(request)
+    monkeypatch.setattr(app.account_auth, "guard", fixture_guard)
+    return TestClient(app.app, headers={"Origin": "http://127.0.0.1", "x-dahan-fixture": token}), core
 
 
 def test_source_pairs(client):
@@ -182,7 +193,7 @@ def test_lan_opt_in(client, monkeypatch):
     monkeypatch.setenv("DAHAN_LAN_ADDRESS", address)
     importlib.reload(app)
     from fastapi.testclient import TestClient
-    with TestClient(app.app) as lan:
+    with TestClient(app.app, headers=dict(c.headers)) as lan:
         assert lan.get("/api/status", headers=headers).status_code == 200
         assert lan.post("/api/people/1/name", json={"name": "LAN test"}, headers=headers).status_code == 200
         assert lan.post("/api/undo", json={}, headers={**headers, "origin": "http://evil.example"}).status_code == 403

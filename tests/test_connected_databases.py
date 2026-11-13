@@ -11,7 +11,7 @@ from tests.test_catalogue import client
 
 
 def local_client(api, address="127.0.0.1", host="127.0.0.1"):
-    return TestClient(api.app, base_url="http://"+host, client=(address, 50123))
+    return TestClient(api.app, base_url="http://"+host, client=(address, 50123), headers=dict(api.headers))
 
 
 def test_analysis_is_read_only_and_defaults_from_actual_tree(client,tmp_path):

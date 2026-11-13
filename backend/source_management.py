@@ -897,7 +897,7 @@ def removal_final(did: str, body: RemoveConfirm):
             if c.execute("SELECT 1 FROM sync_catalogue.sqlite_master WHERE name='file_hashes'").fetchone():
                 prefix=get_database(c,did)['root'].rstrip("\\/")+os.sep
                 c.execute("DELETE FROM sync_catalogue.file_hashes WHERE substr(path,1,?)=?",(len(prefix),prefix))
-            for table in ("discovery_files", "discovery_folders", "discovery_roots"):
+            for table in ("discovery_files", "discovery_folders", "discovery_roots", "discovery_cache_state", "sync_folder_cache"):
                 if c.execute("SELECT 1 FROM sync_catalogue.sqlite_master WHERE name=?",(table,)).fetchone():
                     c.execute(f"DELETE FROM sync_catalogue.{table} WHERE database_id=?",(did,))
             if c.execute("SELECT 1 FROM sync_catalogue.sqlite_master WHERE name='streaming_roots'").fetchone():
@@ -962,10 +962,10 @@ def removal_final(did: str, body: RemoveConfirm):
 
 
 @router.post("/{did}/sync", status_code=202)
-def sync_database(did: str):
+def sync_database(did: str, mode:Literal["sync","full"]="sync"):
     from .sync_service import start_run
     with core.db() as c:
         d = get_database(c, did)
         if not d["sync_enabled"]:
-            raise HTTPException(409, "Resume database syncing before Sync now")
-    return start_run(database_id=did)
+            raise HTTPException(409, "Resume database syncing before Sync")
+    return start_run(database_id=did,mode=mode)

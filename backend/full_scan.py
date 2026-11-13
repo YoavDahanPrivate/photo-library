@@ -14,7 +14,7 @@ import time
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
-from . import core
+from . import core, cache_images
 
 
 def stamp():
@@ -169,12 +169,12 @@ def process_one(identity, preview_only=False):
             for name, edge in [("small", 240), ("medium", 640), ("large", 1600)]:
                 image = frames[0][1].copy()
                 image.thumbnail((edge, edge), Image.Resampling.LANCZOS)
-                target = core.DATA / "thumbs" / f"{identity}-{name}.jpg"
+                target = cache_images.write_path(f"thumbs/{identity}-{name}.jpg")
                 image.save(target.with_suffix(".tmp"), format="JPEG", quality=85)
                 target.with_suffix(".tmp").replace(target)
             if row["kind"] == "video":
                 for i, (_, image) in enumerate(frames):
-                    target = core.DATA / "frames" / f"{identity}-{i}.jpg"
+                    target = cache_images.write_path(f"frames/{identity}-{i}.jpg")
                     image.save(target.with_suffix(".tmp"), format="JPEG", quality=85)
                     target.with_suffix(".tmp").replace(target)
             del frames
@@ -202,13 +202,13 @@ def process_one(identity, preview_only=False):
             return dict(id=identity, ok=True)
         if row["face_status"] != "ready":
             if row["kind"] == "photo":
-                paths = [(0, core.DATA / "thumbs" / f"{identity}-large.jpg")]
+                paths = [(0, cache_images.materialize(f"thumbs/{identity}-large.jpg"))]
             else:
                 times = sorted(
                     set(round((row["duration"] or 0) * f, 3) for f in (0.15, 0.5, 0.85))
                 )
                 paths = [
-                    (t, core.DATA / "frames" / f"{identity}-{i}.jpg")
+                    (t, cache_images.materialize(f"frames/{identity}-{i}.jpg"))
                     for i, t in enumerate(times)
                 ]
             for t, path in paths:

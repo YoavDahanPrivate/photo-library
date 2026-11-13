@@ -8,6 +8,7 @@ param(
     [string]$BackupDirectory = '',
     [string]$LanAddress = '',
     [ValidateRange(1,65535)][int]$Port = 80,
+    [ValidateSet('127.0.0.1','0.0.0.0')][string]$BindAddress = '',
     [switch]$EnableSchedules,
     [switch]$SingleRun,
     [switch]$CheckOnly
@@ -39,11 +40,18 @@ if ($LanAddress) {
     if ([Net.IPAddress]::Parse($LanAddress).AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork) { throw 'LanAddress must be the server IPv4 address.' }
     $taskListen = '0.0.0.0'
 }
+if ($BindAddress) { $taskListen = $BindAddress }
 $env:DAHAN_LAN_ADDRESS = $LanAddress
 if ($CheckOnly) {
     @{application=$taskApp;python=$taskPython;runtime=$RuntimeDirectory;databases=$DatabaseDirectory;logs=$LogsDirectory;host=$taskListen;port=$Port;schedules=[bool]$EnableSchedules;require_existing_database=$true} | ConvertTo-Json
     return
 }
+$taskBackendMutex = New-Object Threading.Mutex($false,('Local\DahanLibraryBackend-'+$Port))
+$taskOwnBackend = $false
+try {
+    try { $taskOwnBackend = $taskBackendMutex.WaitOne(0) }
+    catch [Threading.AbandonedMutexException] { $taskOwnBackend = $true }
+    if (-not $taskOwnBackend) { return }
 if (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue) { throw "Port $Port is already in use." }
 New-Item -ItemType Directory -Path $LogsDirectory -Force | Out-Null
 $taskStop = Join-Path $LogsDirectory ('stop-'+$Port+'.txt')
@@ -62,3 +70,8 @@ do {
     Start-Sleep -Seconds $taskDelay
     $taskDelay = [Math]::Min(60,$taskDelay*2)
 } while (-not (Test-Path -LiteralPath $taskStop))
+
+} finally {
+    if ($taskOwnBackend) { $taskBackendMutex.ReleaseMutex() }
+    $taskBackendMutex.Dispose()
+}

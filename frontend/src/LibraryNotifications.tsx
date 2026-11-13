@@ -1,0 +1,13 @@
+import {useEffect,useRef,useState,type ReactNode} from 'react';
+import {Bell,X} from 'lucide-react';
+export default function LibraryNotifications({profileId,noticeKey,title,children}:{profileId:string;noticeKey:string;title:string;children:ReactNode}){
+ const storageKey='dahan.hidden-notices.'+profileId;
+ const [hidden,setHidden]=useState<string[]>(()=>{try{const v=JSON.parse(localStorage.getItem(storageKey)||'[]');return Array.isArray(v)?v:[];}catch{return [];}});
+ const [highlight,setHighlight]=useState(false),[open,setOpen]=useState(false);
+ const root=useRef<HTMLDivElement>(null),trigger=useRef<HTMLButtonElement>(null);
+ const suppressed=hidden.includes(noticeKey);
+ useEffect(()=>{setHighlight(!!noticeKey&&!suppressed);const timer=setTimeout(()=>setHighlight(false),20000);return()=>clearTimeout(timer);},[noticeKey,suppressed]);
+ useEffect(()=>{if(!open)return;const close=(e:PointerEvent)=>{if(!root.current?.contains(e.target as Node))setOpen(false);};const key=(e:KeyboardEvent)=>{if(e.key==='Escape'){setOpen(false);trigger.current?.focus();}};document.addEventListener('pointerdown',close);document.addEventListener('keydown',key);return()=>{document.removeEventListener('pointerdown',close);document.removeEventListener('keydown',key);};},[open]);
+ function suppress(value:boolean){const next=value?[...new Set([...hidden,noticeKey])]:hidden.filter(k=>k!==noticeKey);setHidden(next);try{localStorage.setItem(storageKey,JSON.stringify(next));}catch{}}
+ return <div className="library-notifications" ref={root}><button ref={trigger} className="outline notification-toggle" aria-label="Notifications" aria-expanded={open} aria-controls="library-notification-panel" onClick={()=>{setOpen(!open);setHighlight(false);}}><Bell size={19}/>{highlight&&<span className="notification-dot"/>}</button>{highlight&&!open&&<button className="library-notification-hint" onClick={()=>{setOpen(true);setHighlight(false);}}>{title}</button>}{open&&<section id="library-notification-panel" className="library-notification-panel" aria-label="Notifications"><div className="library-search-heading"><strong>Notifications</strong><button aria-label="Close notifications" onClick={()=>{setOpen(false);trigger.current?.focus();}}><X size={18}/></button></div>{noticeKey?<><div onClick={e=>{if((e.target as HTMLElement).closest('.people-operation button'))setOpen(false);}}>{children}</div><label className="suppress-notice"><input type="checkbox" checked={suppressed} onChange={e=>suppress(e.target.checked)}/>Don't show this message again</label><small>This applies only to this notice. New notices can still alert you.</small></>:<p>You're all caught up.</p>}</section>}</div>;
+}

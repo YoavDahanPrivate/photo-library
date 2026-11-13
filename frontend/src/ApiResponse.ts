@@ -4,6 +4,7 @@ export async function readApiResponse<T = any>(response: Response): Promise<T> {
   let data: any;
   try { data = text ? JSON.parse(text) : null; } catch { /* Report HTTP failures below. */ }
   if (!response.ok) {
+    if (response.status === 401) window.dispatchEvent(new Event("dahan:session-expired"));
     const detail = data?.detail;
     const message = typeof detail === "string" ? detail : detail?.message;
     throw new Error(message || (detail ? JSON.stringify(detail) :

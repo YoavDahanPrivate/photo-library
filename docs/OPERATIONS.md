@@ -14,6 +14,17 @@
 Thumbnails are filesystem files referenced by catalogue identities, not image
 blobs embedded in SQLite. Keep both databases together when relocating them.
 They include faces, history, annotations, schedules and discovery/work checkpoints.
+`sync.sqlite` also keeps the persistent per-Database directory cache. Sync walks
+all directories and reuses unchanged listings; Full Sync bypasses that cache,
+reads every file's size/modified date, and refreshes it. Scheduled runs use Sync.
+Directory caches are an optimization, not annotation storage. After an external
+restore or on shares with unreliable directory timestamps, use Full Sync. Neither
+mode rehashes content when the recorded file size and modified date are unchanged.
+Pause/Resume retains the chosen mode and existing safe-checkpoint behavior.
+Person portrait choices are stored as face IDs in the catalogue's
+`person_portraits` table; keep that table with the catalogue when backing up or
+relocating. They reference the existing filesystem face crops and add no copy of
+an original. The additive startup migration preserves existing face annotations.
 Moving only code/derivatives does not change those identities. Original-root
 validation excludes both runtime and database folders.
 

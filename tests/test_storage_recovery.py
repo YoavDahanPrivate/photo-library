@@ -67,7 +67,7 @@ def test_offline_database_at_boot_serves_shell_and_recovers_existing_annotations
     monkeypatch.setenv('DAHAN_DATABASE_DIR',str(offline))
     monkeypatch.setenv('DAHAN_REQUIRE_EXISTING_DATABASE','1')
     importlib.reload(app)
-    with TestClient(app.app) as recovering:
+    with TestClient(app.app, headers=dict(http.headers)) as recovering:
         assert recovering.get('/').status_code==200
         assert recovering.get('/api/health').json()['storage']=='unavailable'
         response=recovering.get('/api/status')

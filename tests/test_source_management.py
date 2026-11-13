@@ -268,7 +268,7 @@ def test_schedules_validation_and_targeted_dispatch(client,tmp_path,monkeypatch)
     sync.tick()
     assert calls==[('scheduled',{'database_id':did})]
     assert api.post('/api/databases/'+did+'/sync',json={}).status_code==202
-    assert calls[-1]==('manual',{'database_id':did})
+    assert calls[-1]==('manual',{'database_id':did,'mode':'sync'})
 
 
 @pytest.mark.parametrize('exclusion',['../outside','A/../../B','C:/Photos'])

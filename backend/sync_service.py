@@ -178,7 +178,7 @@ def inventory():
         if database['id'] not in allowed:allowed[database['id']]=first_import(database,identity)
         if allowed[database['id']]:publish(batch,identity,preview_publisher())
     from .discovery_checkpoint import DiscoveryCheckpoint
-    checkpoint = DiscoveryCheckpoint(identity) if identity else None
+    checkpoint = DiscoveryCheckpoint(identity, getattr(worker_context,"sync_mode","full")) if identity else None
     files = registered_inventory(getattr(worker_context,"database_id",None),check_control,getattr(worker_context,"global_scheduled",False),progress=report_progress,on_batch=discovered if identity else None,checkpoint=checkpoint)
     report_progress(force=True)
     return files
@@ -455,6 +455,7 @@ def execute(run_id,lock_context):
         saved=status_progress(run_id)
         worker_context.database_id=saved.get("database_id")
         worker_context.global_scheduled=saved.get("global_scheduled",False)
+        worker_context.sync_mode=saved.get("sync_mode","full")
         import shutil
         if shutil.disk_usage(core.DATA).free<10*1024**3: raise RuntimeError("Less than 10 GiB free on the data SSD")
         check_control(run_id)
@@ -462,13 +463,13 @@ def execute(run_id,lock_context):
             progress=json.loads(c.execute("SELECT progress FROM runs WHERE id=?",(run_id,)).fetchone()[0])
         from .discovery_checkpoint import DiscoveryCheckpoint
         from .source_management import inventory_roots
-        discovery = DiscoveryCheckpoint(run_id)
+        discovery = DiscoveryCheckpoint(run_id, worker_context.sync_mode)
         if progress.get("reconciled") and not discovery.valid_for(inventory_roots(worker_context.database_id, worker_context.global_scheduled)):
             progress["reconciled"] = False
             update_run(run_id,reconciled=False)
-        report_progress(force=True,checkpoint_version=2)
+        report_progress(force=True,checkpoint_version=2,sync_mode=worker_context.sync_mode)
         if not progress.get("reconciled"):
-            report_progress(force=True,phase="Reading source folders",processed=0,total=None,folders_checked=0,media_found=0,current_folder="",current_file="")
+            report_progress(force=True,phase="Reading source folders",processed=0,total=None,folders_checked=0,media_found=0,folders_reused=0,folders_read=0,file_metadata_reused=0,current_folder="",current_file="")
             files=inventory()
             update_run(run_id,phase="Reconciling files",inventory=len(files))
             already_added=status_progress(run_id).get('live_added',0)
@@ -519,6 +520,7 @@ def execute(run_id,lock_context):
             try:publisher.close()
             except Exception:logging.getLogger(__name__).exception("Preview worker cleanup failed")
         worker_context.preview_publisher=None
+        worker_context.sync_mode="full"
         with live_progress_lock: live_progress.pop(run_id,None)
         worker_context.pending_progress={}
         worker_context.run_id=None
@@ -536,7 +538,7 @@ def execute(run_id,lock_context):
 def status_progress(run_id):
     with store() as c: return json.loads(c.execute("SELECT progress FROM runs WHERE id=?",(run_id,)).fetchone()[0] or "{}")
 
-def start_run(reason="manual",resume_id=None,database_id=None):
+def start_run(reason="manual",resume_id=None,database_id=None,mode:Literal["sync","full"]="sync"):
     lock=scan_lock()
     try: lock.__enter__()
     except RuntimeError as e: raise HTTPException(409,str(e))
@@ -564,10 +566,11 @@ def start_run(reason="manual",resume_id=None,database_id=None):
                 c.execute("UPDATE runs SET state='running',finished=NULL,error=NULL WHERE id=?",(resume_id,))
             else:
                 c.execute("INSERT INTO runs VALUES(?,?,NULL,'running',?,'{}',NULL)",(identity,now().isoformat(),reason))
-            if reason=="scheduled" and not database_id:
-                c.execute("UPDATE runs SET progress=? WHERE id=?",(json.dumps({"global_scheduled":True}),identity))
-            if database_id:
-                c.execute("UPDATE runs SET progress=? WHERE id=?", (json.dumps({"database_id":database_id}),identity))
+            if not resume_id:
+                details = {"sync_mode":mode}
+                if reason=="scheduled" and not database_id: details["global_scheduled"]=True
+                if database_id: details["database_id"]=database_id
+                c.execute("UPDATE runs SET progress=? WHERE id=?",(json.dumps(details),identity))
             c.execute("DELETE FROM controls WHERE run_id=?",(identity,))
             setting=Settings.model_validate_json(c.execute("SELECT value FROM settings WHERE id=1").fetchone()[0])
             c.execute("UPDATE settings SET next_due=? WHERE id=1",(next_due(setting,now()),))
@@ -577,7 +580,7 @@ def start_run(reason="manual",resume_id=None,database_id=None):
     return {"id":identity,"state":"running"}
 
 @router.post("/now",status_code=202)
-def sync_now(): return start_run()
+def sync_now(mode:Literal["sync","full"]="sync"): return start_run(mode=mode)
 
 def tick(instant=None):
     instant=instant or now()

@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from .core import DATA, db, init, original
 
+from . import cache_images
 from . import storage_runtime
 storage_runtime.initialize(force=True)
 from contextlib import asynccontextmanager
@@ -23,11 +24,13 @@ async def lifespan(app):
     except RuntimeError: pass
     except (OSError,sqlite3.Error):
         logging.getLogger(__name__).exception("Storage unavailable during startup recovery")
+    cache_images.get_cache()
     sync_service.start_scheduler()
     try:
         yield
     finally:
         sync_service.stop_scheduler()
+        cache_images.close()
 
 app = FastAPI(title="Dahan Photo Library prototype", lifespan=lifespan)
 @app.exception_handler(sqlite3.Error)
@@ -50,6 +53,10 @@ def health():
 
 
 app.include_router(sync_service.router)
+from . import user_profiles
+app.include_router(user_profiles.router)
+from . import account_auth
+app.include_router(account_auth.router)
 from . import source_management
 app.include_router(source_management.router)
 from . import advanced_layout
@@ -92,6 +99,8 @@ for name in filter(None, (value.strip().lower() for value in os.environ.get("DAH
     allowed_hosts.add(name)
     allowed_origins.add(f"http://{name}")
     allowed_origins.add(f"http://{name}:80")
+    allowed_origins.add(f"https://{name}")
+    allowed_origins.add(f"https://{name}:443")
 
 @app.middleware("http")
 async def trusted_hosts(request: Request, call_next):
@@ -111,7 +120,22 @@ async def trusted_hosts(request: Request, call_next):
         from starlette.concurrency import run_in_threadpool
         if not await run_in_threadpool(storage_runtime.initialize):
             return JSONResponse({"detail":storage_runtime.DETAIL},status_code=503,headers={"Retry-After":"5"})
+    from starlette.concurrency import run_in_threadpool
+    denied = await run_in_threadpool(account_auth.guard, request)
+    if denied is not None:
+        denied.headers["Cache-Control"] = "no-store"
+        return denied
     response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "private, no-store"
+    if request.method == "GET" and response.status_code in (200, 206) and request.query_params.get("activity") == "download" and not request.headers.get("range"):
+        parts = request.url.path.strip("/").split("/")
+        if len(parts) == 4 and parts[:2] == ["api", "media"] and parts[3] in ("original", "thumbnail"):
+            from starlette.concurrency import run_in_threadpool
+            try:
+                await run_in_threadpool(user_profiles.record_download, getattr(request.state, "profile_id", ""), parts[2], parts[3])
+            except Exception:
+                logging.getLogger(__name__).warning("Could not record download activity", exc_info=True)
     path = request.url.path
     if path in ("/", "/index.html", "/version.json", "/manifest.webmanifest"):
         response.headers["Cache-Control"] = "no-store, max-age=0"
@@ -487,14 +511,10 @@ def media_neighbors(identity:str,filters=Depends(media_filters),order:Literal["a
 
 
 @app.get("/api/media/{identity}/thumbnail")
-def thumbnail(identity: str, size: Literal["small", "medium", "large"] = "medium"):
+def thumbnail(identity: str, request: Request, size: Literal["small", "medium", "large"] = "medium"):
     get_media(identity)
-    path = DATA / "thumbs" / f"{identity}-{size}.jpg"
-    if not path.exists():
-        raise HTTPException(404, "Thumbnail not ready")
-    return FileResponse(
-        path,
-        media_type="image/jpeg",
+    return cache_images.image_response(
+        f"thumbs/{identity}-{size}.jpg", request, "Thumbnail not ready",
         headers={"Cache-Control": "private, max-age=3600"},
     )
 
@@ -613,7 +633,8 @@ def people():
                     cover=bucket["cover"],
                 ),
             )
-        return result
+        from .person_portraits import decorate
+        return decorate(c,result)
 
 
 @app.get("/api/faces")
@@ -640,7 +661,7 @@ def faces(person: int | None = None, unknown: bool = False):
 
 
 @app.get("/api/faces/{identity}/thumbnail")
-def face_thumb(identity: str):
+def face_thumb(identity: str, request: Request):
     with db() as c:
         face=c.execute("SELECT media_id FROM faces WHERE id=?",(identity,)).fetchone()
     if not face: raise HTTPException(404,"Face not found")
@@ -649,16 +670,15 @@ def face_thumb(identity: str):
         row = c.execute("SELECT id FROM faces WHERE id=?", (identity,)).fetchone()
     if row is None:
         raise HTTPException(404, "Face not found")
-    path = DATA / "faces" / f"{identity}.jpg"
-    if not path.exists():
-        raise HTTPException(404, "Face crop unavailable")
-    return FileResponse(path, media_type="image/jpeg")
+    return cache_images.image_response(f"faces/{identity}.jpg", request, "Face crop unavailable")
 
 
 @app.get("/api/people-name-records")
 def people_name_records():
     with db() as c:
-        rows=[dict(r) for r in c.execute("SELECT p.id,p.name,count(f.id) faces,min(f.id) cover FROM people p LEFT JOIN faces f ON f.person_id=p.id WHERE trim(coalesce(p.name,''))!='' GROUP BY p.id ORDER BY p.name,p.id")]
+        from .person_portraits import decorate,eligible
+        rows=[dict(r) for r in c.execute("SELECT p.id,p.name,count(f.id) faces,(SELECT min(f.id) FROM faces f JOIN media m ON m.id=f.media_id WHERE f.person_id=p.id AND "+eligible()+") cover FROM people p LEFT JOIN faces f ON f.person_id=p.id WHERE trim(coalesce(p.name,''))!='' GROUP BY p.id ORDER BY p.name,p.id")]
+        decorate(c,rows)
     counts={}
     for row in rows:
         key=row['name'].strip().casefold()
@@ -840,6 +860,11 @@ def undo():
         if action is None:
             raise HTTPException(400, "Nothing to undo")
         previous = json.loads(action["previous"])
+        if "portrait" in previous:
+            from .person_portraits import undo as undo_portrait
+            undo_portrait(c,previous['portrait'])
+            c.execute('UPDATE actions SET undone=1 WHERE id=?',(action['id'],))
+            return dict(ok=True,description=action['description'])
         if "review_batch" in previous:
             from .bulk_review import undo_batch
             undo_batch(c, previous)
@@ -889,6 +914,8 @@ from .grouped_review import router as grouped_review_router
 app.include_router(grouped_review_router)
 from .face_calibration import router as calibration_router
 app.include_router(calibration_router)
+from .person_portraits import router as portrait_router
+app.include_router(portrait_router)
 from .manual_faces import router as manual_router
 
 app.include_router(manual_router)

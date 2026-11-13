@@ -42,7 +42,7 @@ during sync. Invalid/inaccessible roots, traversed links and overlapping roots
 are rejected. Registration itself does not start a scan.
 
 The Database table supports aliases, expandable Sources/Albums, independent
-visibility and sync controls, exclusions, schedules, Sync now, Pause/Resume and
+visibility and sync controls, exclusions, schedules, Sync / Full Sync, Pause/Resume and
 More actions. Exclusions affect future scans; existing catalogue records remain.
 Hiding leaves records intact. Removing a Database requires two confirmations and
 typing its alias. Removal deletes its catalogue records/annotations, preserves
@@ -91,9 +91,53 @@ separate; visibility applies, and equal Album names do not merge. The Library
 Source filter offers these views. Database filtering includes child Databases
 only when Include child Databases is selected. Removing a link keeps its members.
 
+## Choose a person portrait
+
+Open **People**, select an individual person, and click **Choose portrait** beside
+their name controls. The same picker is available when reviewing a selected
+person in **Review by person**, and from **Library tools → People names**.
+
+Browse the paged assigned faces (including video frames), select a clear face,
+check its circular preview, then click **Save portrait**. All pages are available;
+this is not limited to the first 2,000 faces shown by the older group endpoint.
+Missing previews cannot be selected. **Cancel**, the close button and Escape
+discard an unsaved choice. **Use automatic**, then Save, restores automatic
+selection. **Undo last change** can restore the preceding saved portrait.
+
+The selection is shared by everyone using the library: People cards, person
+filters, review-by-person portraits and name tools use the same saved face.
+It changes display metadata only; assignments, embeddings and recognition
+training are unchanged. The detected face shown beside a particular photo still
+shows that photo's actual face. Unknown/unassigned shared buckets have no
+individual portrait setting.
+
+Only available faces belonging to that individual in visible Sources/Databases
+can be chosen. If the saved face is later moved, dismissed, archived as Unknown,
+or its media becomes hidden/missing/removed, Dahan uses an eligible automatic
+portrait. Temporarily hidden selections can return when their source is shown.
+Original files are never changed.
+
 ## Sync, Pause, Stop and Resume
 
-Sync now starts a fresh snapshot. Preview batches make newly indexed media
+**Sync** is the everyday option for a photo archive where existing originals are
+not edited in place. It visits every directory, including deep subfolders, but
+reuses cached file lists/sizes/modified dates when that directory's timestamp and
+identity are unchanged. Changed/new folders are enumerated normally. The first
+run builds the cache; later runs can avoid many network file-metadata requests.
+
+**Full Sync** performs the previous **Sync now** scan: it enumerates every folder
+and checks each file's size and modified date. Use it after editing/replacing
+existing files, restoring folders with preserved timestamps, or when a network
+drive does not reliably update directory dates. Like the previous scan, it does
+not rehash files whose recorded size and modified date are unchanged.
+
+Both buttons are in each Database's **More** controls and in **Sync & recognition**
+for the whole library. Scheduled runs use Sync. Resume retains the run's saved
+mode; older saved runs retain Full Sync behavior. Progress reports the mode and
+folder listings/file metadata reused. Cache entries live in `sync.sqlite`, not
+in originals; changing roots/layout/exclusions/source scope invalidates them.
+
+Either button starts a fresh snapshot. Preview batches make newly indexed media
 visible while scanning continues; recognition follows preview publishing. The
 Library refreshes loaded results when the catalogue revision changes, preserving
 filters, loaded pages, scroll and selection. Old imports follow the current
@@ -109,7 +153,7 @@ Pause saves folder listings, remaining folders, mapped batches, file hashes and
 processing queues in `sync.sqlite`. Clean Resume reuses completed directory
 listings instead of walking them again. After a crash, only unfinished/uncommitted
 work needs revalidation; media batches contain at most 50 files. Files added to
-an already-read folder are discovered by the next **new** Sync now. Changes to
+an already-read folder are discovered by the next **new** Sync. Changes to
 roots, layouts or scope invalidate incompatible inventory snapshots. Older scans
 may need one initial walk to obtain the new checkpoints.
 
@@ -332,3 +376,24 @@ in this browser for the next visit. Portraits continue loading as you scroll;
 filtering or changing sort resets the loaded window without limiting the results.
 Hiding a category clears unnamed-group selection so hidden groups cannot be moved
 accidentally. These display changes do not alter face assignments or matching.
+
+
+## Responsive Library and previews (November 2026)
+
+The fixed Library header contains source, grouping, media-type and sorting controls.
+On mobile, open View options to change them. A successful search returns to the
+thumbnail gallery. Preview opens with one click or tap; metadata and navigation
+load in the background. The Library header stays hidden until preview closes.
+
+On touch devices, the slim information handle opens a draggable sheet in portrait
+and landscape. Drag down to collapse it. Wide sheets show two information pairs
+per row; narrow sheets show one. Thumbnail quick information uses a small icon
+over the image, without adding a caption row.
+
+Open the header's overflow menu for appearance and selection. Tap outside, choose
+Close, or press Escape to dismiss it. In selection mode, choose media using the
+circular checks; Cancel selection exits without changing files. Share / save selected
+opens JPEG-preview or original-file options. Supported browsers can pass prepared
+files to the native share sheet, where Save Images / Save to Photos may be offered.
+Individual download links are also available. JPEG export of a video is a still image;
+choose originals to save the actual video.

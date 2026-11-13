@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 from urllib.request import urlopen
+from urllib.error import HTTPError
 
 import pytest
 
@@ -39,7 +40,10 @@ assert initialize()['registered_databases'] == 0
 from backend.app import app
 from fastapi.testclient import TestClient
 from PIL import Image
-with TestClient(app) as api:
+with TestClient(app, base_url='https://localhost', headers={'Origin':'http://localhost'}) as api:
+    assert api.get('/api/databases').status_code == 401
+    assert api.post('/api/auth/login',json={'username':'yoav','password':'Yoav1919'}).status_code == 200
+    assert api.post('/api/auth/password',json={'current_password':'Yoav1919','new_password':'disposable fresh install password'}).status_code == 200
     assert api.get('/api/databases').json() == []
     assert api.get('/api/status', headers={'host':'dahanoffice'}).status_code == 403
     assert api.get('/api/sources').json() == []
@@ -154,12 +158,15 @@ def test_windows_install_and_launch_using_only_saved_local_configuration(tmp_pat
         while True:
             assert process.poll() is None, 'Isolated production launcher exited'
             try:
-                with urlopen(f'http://127.0.0.1:{port}/api/databases',timeout=2) as response:
-                    assert json.load(response) == []
+                with urlopen(f'http://127.0.0.1:{port}/api/health',timeout=2) as response:
+                    assert json.load(response)['storage'] == 'available'
                 break
             except OSError:
                 if time.monotonic() > deadline: raise
                 time.sleep(.2)
+        with pytest.raises(HTTPError) as anonymous:
+            urlopen(f'http://127.0.0.1:{port}/api/databases',timeout=3)
+        assert anonymous.value.code == 401
         with urlopen(f'http://127.0.0.1:{port}/api/health',timeout=3) as response:
             assert json.load(response)['storage'] == 'available'
     finally:

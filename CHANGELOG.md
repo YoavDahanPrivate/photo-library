@@ -1,4 +1,34 @@
+## 2026-11-13 — Portable release and responsive Library
+
+- Bundle-ready D: launcher checks the tunnel before starting the backend on 0.0.0.0:80 and the loopback gateway; repeated launches reuse running processes.
+- Serve verified ZIP64 image-cache packs alongside loose images and writable overrides.
+- Consolidate Library controls into the header; mobile controls open on demand and completed searches return to thumbnails.
+- Open previews immediately while metadata and navigation finish in the background; preserve usable controls and ignore stale completions.
+- Use a slim, theme-aware mobile information sheet in portrait and landscape, with width-aware paired facts.
+- Add dismissible menus, subtle selection controls, selected-file sharing/saving and compact thumbnail information affordances.
+- Include account/password/passkey, portrait and library-registration work accumulated since the previous main-branch milestone.
+
 # Changelog
+
+## 2026-10-20 — Choose a person portrait
+
+Added a portrait picker on the person page, Review by person, and People names.
+Browse all eligible assigned photo/video faces with paging, preview a choice,
+then save it for every person portrait in the app. Use automatic and Undo are
+supported. Portraits are catalogue display metadata, independent of recognition;
+invalid, reassigned, hidden or removed faces safely fall back to automatic.
+Added an additive catalogue table and revision triggers, isolated schema/undo/
+visibility/removal tests, and a desktop/mobile browser workflow.
+
+## 2026-10-19 — Sync and Full Sync
+
+Added everyday Sync using persistent per-folder timestamps/identities and cached
+file metadata, while still visiting the complete directory tree. Full Sync keeps
+the former Sync now behavior. Both controls are available per Database and
+globally, scheduled runs use Sync, and Pause/Resume retains the saved mode.
+Progress shows cache reuse. Layout/scope/root changes invalidate cache entries;
+offline inventories still abort before missing-file reconciliation. Added isolated
+cache/removal/annotation/recovery tests and a desktop/mobile browser workflow.
 
 ## 2026-10-15 — People review milestone source checkpoint
 

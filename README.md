@@ -6,9 +6,14 @@ A self-hosted photo/video library for a household, with local face recognition,
 offline maps, and desktop/mobile browsing. The current milestone adds configurable
 Databases → Sources → Albums, person-first face review and persistent People browsing.
 
-The application currently targets a Windows host on a trusted home network.
-Accounts, authentication and HTTPS provisioning are not implemented; keep the
-unauthenticated server off the public internet.
+The application targets a Windows host and supports individual accounts, passwords,
+passkeys, account-specific preferences, and a protected HTTPS gateway. The latest
+release adds responsive Library browsing, nonblocking previews, mobile information
+sheets, selected-media sharing/saving, and verified packed-image caches.
+
+See [the portable distribution guide](docs/portable-distribution.md) for the self-contained
+D: layout and tunnel-first launcher. Runtime data, credentials, models, Python binaries
+and original media remain outside Git.
 
 ## Documentation
 

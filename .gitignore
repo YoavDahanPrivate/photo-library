@@ -35,3 +35,17 @@ server-config.json
 dahan-config.json
 production-service.json
 verification-report.json
+
+# Generated deployment integrity manifest
+deployed-release.json
+
+# Private/assembled portable distribution state
+*.token
+cachepacks/
+cache-image-overrides/
+distribution/python/
+distribution/tunnel/
+distribution/app/
+distribution/logs/
+distribution/cache-pack-config.json
+distribution/self-contained-owner.json
