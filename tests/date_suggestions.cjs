@@ -19,3 +19,10 @@ assert(searchSuggestions('Incl',4,[]).some(s=>s.label==='Includes'));
 assert(searchSuggestions('bef',3,[]).some(s=>s.label==='before'));
 assert.equal(searchSuggestions('Includes("After Ma',18,[{label:'After May',value:'After May',kind:'Person'}])[0].kind,'Person');
 console.log('PASS: date phrase completion, month/day/year, mid-query replacement, both range endpoints, invalid dates, command/person isolation');
+
+for(const phrase of ['August 2024','Aug 2024','aug. 2024']){
+ const options=searchSuggestions(phrase,phrase.length,[]);
+ assert.equal(options[0].insert,'in '+phrase);
+}
+const portrait=searchSuggestions('Maya',4,[{label:'Maya',value:'Maya',kind:'Person',thumbnail:'/api/faces/face1/thumbnail'}])[0];
+assert.equal(portrait.thumbnail,'/api/faces/face1/thumbnail');

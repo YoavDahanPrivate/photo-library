@@ -1,6 +1,6 @@
 import {dateSuggestions,datePhrases} from "./dateSuggestions";
-export type SearchItem={label:string;value:string;kind:string;aliases?:string[]};
-export type Suggestion={label:string;kind:string;insert:string;start:number;end:number;caret?:number};
+export type SearchItem={label:string;value:string;kind:string;thumbnail?:string;aliases?:string[]};
+export type Suggestion={label:string;kind:string;insert:string;start:number;end:number;thumbnail?:string;caret?:number};
 export const normalizeSearch=(s:string)=>s.normalize("NFKD").replace(/[\u0300-\u036f]/g,"").toLowerCase().trim();
 export const deviceKey=(s:string)=>normalizeSearch(s).replace(/[^\p{L}\p{N}]/gu,"");
 const commands=["Includes","Only","Just","Person","Place","Phone","Album","MediaType","Orientation","Text","Area","Location","AllPhones","date"];
@@ -46,7 +46,7 @@ export function searchSuggestions(text:string,cursor:number,items:SearchItem[]):
  for(const item of candidates.filter(matches).sort((a,b)=>rank(a)-rank(b)||a.label.localeCompare(b.label))){
   const q=JSON.stringify(item.value);
   const insert=item.value==="__all_phones__"?"AllPhones()":inArgument?q:item.kind==="Person"?'Includes('+q+')':item.kind==="Country"||item.kind==="City"?'Place('+q+')':item.kind==="Media"?'MediaType('+q+')':item.kind==="Device"?'Phone('+q+')':'Album('+q+')';
-  out.push({label:item.label,kind:item.kind,insert,start,end});
+  out.push({label:item.label,kind:item.kind,thumbnail:item.thumbnail,insert,start,end});
  }
  return out.slice(0,12);
 }

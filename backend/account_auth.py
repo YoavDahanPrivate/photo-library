@@ -34,6 +34,7 @@ DUMMY=hash_password(secrets.token_urlsafe(32))
 
 def migrate(c):
     c.executescript('''
+    CREATE TABLE IF NOT EXISTS account_policy_migrations(id TEXT PRIMARY KEY);
     CREATE TABLE IF NOT EXISTS account_passwords(profile_id TEXT PRIMARY KEY REFERENCES user_profiles(id),password_hash TEXT NOT NULL,must_change INTEGER NOT NULL DEFAULT 1);
     CREATE TABLE IF NOT EXISTS account_sessions(token_hash TEXT PRIMARY KEY,profile_id TEXT NOT NULL REFERENCES user_profiles(id),expires REAL NOT NULL);
     CREATE TABLE IF NOT EXISTS account_attempts(key TEXT NOT NULL,at REAL NOT NULL);
@@ -44,6 +45,18 @@ def migrate(c):
     for name in user_profiles.NAMES:
         if not c.execute('SELECT 1 FROM account_passwords WHERE profile_id=?',(name.lower(),)).fetchone():
             c.execute('INSERT INTO account_passwords(profile_id,password_hash) VALUES(?,?)',(name.lower(),hash_password(name+'1919')))
+
+    # Apply the shared Guest credential policy once, without resetting normal users.
+    if not c.execute("SELECT 1 FROM account_policy_migrations WHERE id='guest-password-only-v1'").fetchone():
+        c.execute("UPDATE account_passwords SET password_hash=?,must_change=0 WHERE profile_id='guest'", (hash_password('Guest123456'),))
+        for table in ('account_sessions','account_challenges','account_passkeys'):
+            c.execute(f"DELETE FROM {table} WHERE profile_id='guest'")
+        c.execute("INSERT INTO account_policy_migrations VALUES('guest-password-only-v1')")
+
+
+def require_personal_account(identity):
+    if identity == 'guest':
+        raise HTTPException(403, 'Guest uses a fixed shared password. Password changes and passkeys are unavailable.')
 
 # Browser identification is convenience, not proof of device identity. Only direct
 # RFC1918 LAN peers qualify; loopback proxies and forwarded requests never do.
@@ -156,7 +169,7 @@ def logout(request:Request):
 
 @router.post('/password')
 def change_password(body:PasswordChange,request:Request):
-    identity=session(request,True)['profile_id'];rate(request,identity)
+    identity=session(request,True)['profile_id'];require_personal_account(identity);rate(request,identity)
     with db() as c:
         row=c.execute('SELECT password_hash FROM account_passwords WHERE profile_id=?',(identity,)).fetchone()
         if not check_password(body.current_password,row['password_hash']): raise HTTPException(401,'Current password is incorrect.')
@@ -189,7 +202,7 @@ def consume(request,kind,binding=None):
 
 @router.post('/passkeys/register/options')
 def register_options(body:PasswordProof,request:Request):
-    auth=session(request);identity=auth['profile_id'];rate(request,identity)
+    auth=session(request);identity=auth['profile_id'];require_personal_account(identity);rate(request,identity)
     with db() as c:
         row=c.execute('SELECT password_hash FROM account_passwords WHERE profile_id=?',(identity,)).fetchone()
         if not check_password(body.password,row['password_hash']): raise HTTPException(401,'Current password is incorrect.')
@@ -201,7 +214,7 @@ def register_options(body:PasswordProof,request:Request):
 
 @router.post('/passkeys/register/verify')
 def register_verify(body:Credential,request:Request):
-    auth=session(request);flow=consume(request,'register',auth['token_hash'])
+    auth=session(request);require_personal_account(auth['profile_id']);flow=consume(request,'register',auth['token_hash'])
     if flow['profile_id']!=auth['profile_id']: raise HTTPException(403,'Wrong account')
     try: result=verify_registration_response(credential=body.credential,expected_challenge=flow['challenge'],expected_rp_id=RP,expected_origin=ORIGIN,require_user_verification=True)
     except Exception: raise HTTPException(400,'Passkey verification failed. Please try again.')
@@ -213,7 +226,7 @@ def register_verify(body:Credential,request:Request):
 
 @router.post('/passkeys/login/options')
 def login_options(body:Username,request:Request):
-    identity=body.username.strip().lower();rate(request,identity)
+    identity=body.username.strip().lower();require_personal_account(identity);rate(request,identity)
     with db() as c: keys=c.execute('SELECT id FROM account_passkeys WHERE profile_id=?',(identity,)).fetchall()
     if not keys: raise HTTPException(400,'Sign in with your password to enable a passkey first.')
     options=generate_authentication_options(rp_id=RP,allow_credentials=[PublicKeyCredentialDescriptor(id=decode(k['id'])) for k in keys],user_verification=UserVerificationRequirement.REQUIRED)
@@ -222,6 +235,7 @@ def login_options(body:Username,request:Request):
 @router.post('/passkeys/login/verify')
 def login_verify(body:Credential,request:Request):
     flow=consume(request,'login')
+    require_personal_account(flow['profile_id'])
     with db() as c: key=c.execute('SELECT * FROM account_passkeys WHERE id=? AND profile_id=?',(body.credential.get('id',''),flow['profile_id'])).fetchone()
     if not key: raise HTTPException(400,'Passkey verification failed.')
     try:
@@ -238,11 +252,12 @@ def login_verify(body:Credential,request:Request):
 @router.get('/passkeys')
 def list_keys(request:Request):
     identity=session(request)['profile_id']
+    require_personal_account(identity)
     with db() as c: return [dict(r) for r in c.execute('SELECT id,name,created_at,last_used_at FROM account_passkeys WHERE profile_id=?',(identity,))]
 
 @router.post('/passkeys/{key_id}/remove')
 def remove_key(key_id:str,body:PasswordProof,request:Request):
-    identity=session(request)['profile_id'];rate(request,identity)
+    identity=session(request)['profile_id'];require_personal_account(identity);rate(request,identity)
     with db() as c:
         row=c.execute('SELECT password_hash FROM account_passwords WHERE profile_id=?',(identity,)).fetchone()
         if not check_password(body.password,row['password_hash']): raise HTTPException(401,'Current password is incorrect.')

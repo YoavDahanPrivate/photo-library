@@ -394,3 +394,50 @@ def test_unified_search_filter_terms(client):
     assert ids(c, 'Text("Trips")') == {'1'}
     for value in ['Area("nan,41,9,11")','Area("-100,41,9,11")','MediaType("bad")','Location("bad")']:
         assert c.get('/api/search/validate',params={'expression':value}).status_code == 422
+
+
+def test_search_popularity_counts_distinct_photos(client):
+    c, core = client
+    with core.db() as db:
+        db.execute("INSERT INTO faces(id,media_id,person_id,bbox,embedding) VALUES('repeat','0',1,'[]',?)", (b'0000',))
+        db.execute("UPDATE media SET kind='video' WHERE id='1'")
+    people = {p['id']: p for p in c.get('/api/people').json()}
+    assert people[1]['count'] == 3
+    assert people[1]['photo_count'] == 1
+    assert people[2]['photo_count'] == 1
+
+
+def test_search_popup_examples_validate(client):
+    import ast
+    import re
+    from pathlib import Path
+    c, _ = client
+    source = (Path(__file__).resolve().parents[1] / 'frontend/src/SearchExamples.tsx').read_text(encoding='utf-8')
+    examples = re.findall(r"^  \['[^']*', ('[^']*'),", source, re.M)
+    assert len(examples) == 10
+    for example in examples:
+        expression = ast.literal_eval(example)
+        response = c.get('/api/search/validate', params={'expression': expression})
+        assert response.status_code == 200, (expression, response.text)
+
+
+def test_directory_search_collections_and_explicit_people(client):
+    c, core = client
+    with core.db() as db:
+        db.execute("INSERT INTO faces(id,media_id,person_id,status) VALUES('unknown','0',NULL,'manual'),('unassigned','1',NULL,'manual')")
+        db.execute("INSERT INTO unknown_faces VALUES('unknown')")
+        db.execute("INSERT INTO people(id,name) VALUES(3,'Maya'),(4,NULL)")
+        db.execute("INSERT INTO faces(id,media_id,person_id,status) VALUES('other-maya','2',3,'manual'),('unnamed','2',4,'manual')")
+    assert ids(c, 'Includes("Maya [#1]" and "Daniel [#2]")') == {'0'}
+    assert ids(c, 'Includes("Maya [#3]")') == {'2'}
+    assert ids(c, 'Includes("Group 4 [#4]")') == {'2'}
+    assert ids(c, 'Includes("Unknown People [#-1]")') == {'0'}
+    assert ids(c, 'Includes("Unassigned faces [#0]")') == {'1'}
+    assert ids(c, 'Includes("Maya [#1]" and "Unknown People [#-1]")') == {'0'}
+    assert ids(c, 'Includes("Unknown People [#-1]" and "Unassigned faces [#0]")') == set()
+    for mode in ('Only','Just'):
+        assert c.get('/api/search/validate', params={'expression':mode+'("Unknown People [#-1]")'}).status_code == 422
+    with core.db() as db:
+        db.execute("UPDATE faces SET status='dismissed' WHERE id IN ('unknown','unassigned')")
+    assert ids(c, 'Includes("Unknown People [#-1]")') == set()
+    assert ids(c, 'Includes("Unassigned faces [#0]")') == set()

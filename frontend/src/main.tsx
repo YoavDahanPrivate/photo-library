@@ -335,10 +335,17 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
     [selected, setSelected] = useState<string[]>([]),
     [personName, setPersonName] = useState(""),
     [target, setTarget] = useState("");
-  const peopleBrowse=usePeopleBrowse(people,profile);
+  const peopleBrowse=usePeopleBrowse(people,profile,page==="people"&&!settingsOpen&&group===null);
   const visiblePeople=peopleBrowse.visible;
+  const [searchPeopleIds,setSearchPeopleIds]=useState<number[]>([]);
+  const [peopleSearchBusy,setPeopleSearchBusy]=useState(false);
+  const peopleSearchMode=peopleBrowse.preferences.action==='search';
+  const peopleSelectionMode=peopleSearchMode&&peopleBrowse.selectionMode;
+  const selectedSearchPeople=visiblePeople.filter(p=>searchPeopleIds.includes(p.id));
+  useEffect(()=>{setSearchPeopleIds([]);},[peopleBrowse.preferences.known,peopleBrowse.preferences.unknown,peopleBrowse.preferences.action,peopleBrowse.selectionMode]);
+  const toggleSearchPerson=(id:number)=>setSearchPeopleIds(old=>old.includes(id)?old.filter(value=>value!==id):[...old,id]);
   useEffect(()=>{setPeopleLimit(120);},[peopleBrowse.preferences]);
-  useEffect(()=>{setSelectedGroups([]);},[peopleBrowse.preferences.known,peopleBrowse.preferences.unknown]);
+  useEffect(()=>{setSelectedGroups([]);},[peopleBrowse.preferences.known,peopleBrowse.preferences.unknown,peopleBrowse.preferences.action]);
   useEffect(()=>{setReviewFocus(null);},[page,group]);
   const [detail, setDetail] = useState<Detail | null>(null),
     [preview, setPreview] = useState(""),
@@ -625,6 +632,22 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
     setPeopleFilter([]);
     setQ("");
   };
+  const findPeoplePhotos=async (chosen:Person[])=>{
+    if(!chosen.length||peopleSearchBusy)return;
+    const names=chosen.map(p=>JSON.stringify(`${p.name||`Group ${p.id}`} [#${p.id}]`));
+    const next=`Includes(${names.join(" and ")})`;
+    setPeopleSearchBusy(true);setError("");
+    try{
+      const response=await fetch('/api/search/validate?'+new URLSearchParams({expression:next}));
+      await readApiResponse(response);
+      reset();setDatabaseScope("");setSourceScope("");setIncludeChildren(false);
+      setExpression(next);setResultsLoading(true);setSearchOpen(false);setDisplayOptionsOpen(false);
+      setGroup(null);setSettingsOpen(false);setPage('library');setSearchPeopleIds([]);
+      void recordProfileSearch(profile.id,next,phoneNames).catch(()=>{});
+      requestAnimationFrame(()=>document.querySelector('main.library-workspace-page')?.scrollTo({top:0}));
+    }catch(e){setError(e instanceof Error?e.message:String(e));}
+    finally{setPeopleSearchBusy(false);}
+  };
   const togglePhone = (phone: string) => {
     setScope((old) =>
       old.includes(phone) ? old.filter((p) => p !== phone) : [...old, phone],
@@ -892,7 +915,7 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     const favicon=document.querySelector<HTMLLinkElement>('link[rel="icon"]');
-    if(favicon)favicon.href="/brand/dahan-"+(["sage","ocean","plum","black","dark"].includes(theme)?theme:"sage")+"-v2.svg";
+    if(favicon)favicon.href="/brand/dahan-"+(theme==="white"?"black":["sage","ocean","plum","black","dark"].includes(theme)?theme:"sage")+"-v2.svg";
     try {localStorage.setItem("dahan.theme", theme);} catch {}
   }, [theme]);
   useEffect(()=>{try{localStorage.setItem('dahan.view.'+profile.id,view);localStorage.setItem('dahan.order.'+profile.id,order);localStorage.setItem('dahan.sort.'+profile.id,sortBy);}catch{}},[profile.id,view,order,sortBy]);
@@ -1255,7 +1278,7 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
             <LibraryNotifications profileId={profile.id} noticeKey={peopleOperation ? JSON.stringify([peopleOperation.id,peopleOperation.state,peopleOperation.error,peopleOperation.result]) : approvingAll ? 'approving' : ''} title={peopleOperation?.phase || 'Saving assignments'}>
               <PeopleProgress persistent onReview={()=>{setSettingsOpen(true);window.location.hash="tools/people";setPage("people");setGroup(null);setReviewPerson("");setReviewFocus(null);setReviewOptionsOpen(true);requestAnimationFrame(()=>{const target=document.querySelector<HTMLElement>(peopleOperation?.kind==='calibrate'?'.matching-quality':'.people-review-tools');if(target instanceof HTMLDetailsElement)target.open=true;target?.scrollIntoView({block:'start'});});}} operation={peopleOperation} approving={approvingAll} approvalCount={approvalCount} connection={peopleProgressError} onRetry={()=>reevaluatePeople()} retryDisabled={busy||!!savingReviews.length} onCancel={async()=>{if(peopleOperation)try{await api("/people/operations/"+peopleOperation.id+"/cancel",{});}catch(e){setError(String(e));throw e;}}}/>
             </LibraryNotifications>
-            <details className="library-appearance"><summary aria-label="Appearance" title="Appearance">⋯</summary>          <div className="appearance-panel"><button className="appearance-close" aria-label="Close menu" onClick={e=>{const menu=e.currentTarget.closest('details');if(menu){menu.open=false;menu.querySelector<HTMLElement>('summary')?.focus();}}}>Close <X size={14}/></button><label className="theme-picker">Theme <select aria-label="Color theme" value={theme} onChange={(e) => setTheme(e.target.value)}><option value="sage">Sage</option><option value="ocean">Ocean</option><option value="plum">Plum</option><option value="black">Black</option><option value="dark">Dark</option></select></label>{page==="library"&&!settingsOpen&&<button onClick={e=>{setSelectingMedia(true);const menu=e.currentTarget.closest('details');if(menu)menu.open=false;}}>Select photos &amp; videos</button>}</div></details>
+            <details className="library-appearance"><summary aria-label="Appearance" title="Appearance">⋯</summary>          <div className="appearance-panel"><button className="appearance-close" aria-label="Close menu" onClick={e=>{const menu=e.currentTarget.closest('details');if(menu){menu.open=false;menu.querySelector<HTMLElement>('summary')?.focus();}}}>Close <X size={14}/></button><label className="theme-picker">Theme <select aria-label="Color theme" value={theme} onChange={(e) => setTheme(e.target.value)}><option value="sage">Sage</option><option value="ocean">Ocean</option><option value="plum">Plum</option><option value="black">Black</option><option value="dark">Dark</option><option value="white">White</option></select></label>{page==="library"&&!settingsOpen&&<button onClick={e=>{setSelectingMedia(true);const menu=e.currentTarget.closest('details');if(menu)menu.open=false;}}>Select photos &amp; videos</button>}</div></details>
             <button className="outline profile-switch" onClick={onSwitchProfile} title="Account settings">{profile.name}<span className="account-label"> · Account</span></button>
           </div>
           {page==="library"&&!settingsOpen&&<div id="library-view-options" className={"library-filter-slot"+(displayOptionsOpen?" options-open":"")} ref={setHeaderControls}/>}
@@ -1448,21 +1471,28 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
                       ? "People"
                       : activeGroup?.name || "An unnamed person"}
                 </h1>
-                <p>Help your library put a name to a face.</p>
+                <p>{peopleSearchMode&&group===null?"Find photos of the people you choose.":"Help your library put a name to a face."}</p>
               </div>
-              <button
+              {(group!==null||!peopleSearchMode)&&<button
                 className="outline"
                 disabled={busy || peopleWorking || approvingAll || savingReviews.length > 0}
                 onClick={() => perform("/undo", {})}
               >
                 <Undo2 size={17} />
                 Undo last change
-              </button>
+              </button>}
             </div>
             {group === null ? (
               <>
                 <PeopleBrowse browse={peopleBrowse}/>
-                {peopleBrowse.preferences.unknown&&!!unnamedGroups.length&&<section
+                {peopleSelectionMode&&<section className="group-selection-bar" aria-label="Find photos with selected people">
+                  <strong role="status">{selectedSearchPeople.length} selected</strong>
+                  <div className="builder-actions">
+                    <button className="primary" disabled={!selectedSearchPeople.length||peopleSearchBusy} onClick={()=>void findPeoplePhotos(selectedSearchPeople)}>{peopleSearchBusy?'Finding…':'Find photos'}</button>
+                    <button disabled={!searchPeopleIds.length||peopleSearchBusy} onClick={()=>setSearchPeopleIds([])}>Deselect all</button>
+                  </div><p className="small-note">Find photos containing every selected person. Other people may also appear. Unknown People and Unassigned faces match photos containing faces in those collections.</p>
+                </section>}
+                {!peopleSearchMode&&peopleBrowse.preferences.unknown&&!!unnamedGroups.length&&<section
                   className="group-selection-bar"
                   aria-label="Select unnamed groups"
                 >
@@ -1525,12 +1555,13 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
                     <div
                       className={
                         "selectable-person " +
-                        (eligibleGroups.includes(p.id) ? "group-selected" : "")
+                        ((peopleSearchMode?searchPeopleIds.includes(p.id):eligibleGroups.includes(p.id)) ? "group-selected" : "")
                       }
                       key={p.id}
                       data-person-card={p.id}
                     >
-                      {p.id > 0 && !p.name?.trim() && (
+                      {peopleSelectionMode&&<label className="group-checkbox"><input type="checkbox" aria-label={`Select ${personLabel(p)}`} checked={searchPeopleIds.includes(p.id)} disabled={peopleSearchBusy} onChange={()=>toggleSearchPerson(p.id)}/><span>Select</span></label>}
+                      {!peopleSearchMode && p.id > 0 && !p.name?.trim() && (
                         <label className="group-checkbox">
                           <input
                             type="checkbox"
@@ -1551,7 +1582,9 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
                       <button
                         className="person-card"
                         key={p.id}
-                        onClick={() => openPeopleGroup(p.id)}
+                        disabled={peopleSearchBusy}
+                        aria-pressed={peopleSelectionMode?searchPeopleIds.includes(p.id):undefined}
+                        onClick={() => peopleSearchMode ? peopleSelectionMode ? toggleSearchPerson(p.id) : void findPeoplePhotos([p]) : openPeopleGroup(p.id)}
                       >
                         <img
                           src={faceThumb(p.cover)}

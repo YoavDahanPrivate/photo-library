@@ -58,6 +58,9 @@ class Parser:
         return value
 
     def person(self, name):
+        # Explicit directory collection identities cannot collide with saved names.
+        if name == "Unknown People [#-1]": return -1
+        if name == "Unassigned faces [#0]": return 0
         rows = self.c.execute("SELECT id,name FROM people").fetchall()
         explicit = re.fullmatch(r"(.*) \[#(\d+)\]", name)
         if explicit:
@@ -85,6 +88,10 @@ class Parser:
         return matches[0]
 
     def exists(self, identity):
+        if identity == -1:
+            return ("EXISTS(SELECT 1 FROM faces sf JOIN unknown_faces uf ON uf.face_id=sf.id WHERE sf.media_id=m.id AND sf.status!='dismissed')", [])
+        if identity == 0:
+            return ("EXISTS(SELECT 1 FROM faces sf WHERE sf.media_id=m.id AND sf.person_id IS NULL AND sf.status='manual' AND NOT EXISTS(SELECT 1 FROM unknown_faces uf WHERE uf.face_id=sf.id))", [])
         return (
             "EXISTS(SELECT 1 FROM faces sf WHERE sf.media_id=m.id AND sf.status!='dismissed' AND sf.person_id=?)",
             [identity],
@@ -187,6 +194,8 @@ class Parser:
             if grouped:
                 self.expect(")")
             ids = list(dict.fromkeys(ids))
+            if mode != 'includes' and any(identity <= 0 for identity in ids):
+                raise ValueError('Use Includes for Unknown People or Unassigned faces collections')
             parts, args = [], []
             for identity in ids:
                 sql, params = self.exists(identity)
@@ -264,6 +273,10 @@ class Parser:
             return (None, []) if self.ignore_geography else ("(" + " AND ".join(clauses) + ")", args)
         if token in ("date", "after", "before", "between", "since", "until", "through", "on", "in", "during", ">", "<", ">=", "<=", "=", "==", "!="):
             return self.date_clause()
+        from .search_dates import MONTHS, comparison
+        if (token.rstrip('.') in MONTHS and self.i + 1 < len(self.tokens)
+                and re.fullmatch(r'\d{4}', self.tokens[self.i + 1])):
+            return comparison('=', self.date_value())
         name_start = self.i
         typed = token in ("person", "place")
         if typed:

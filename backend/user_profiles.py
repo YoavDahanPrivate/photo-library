@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from .core import db
 
 router = APIRouter(prefix='/api/profiles', tags=['profiles'])
-NAMES = ('Yoav', 'Hila', 'Bar', 'Rotem', 'Guy', 'Guest')
+NAMES = ('Yoav', 'Hila', 'Bar', 'Rotem', 'Guy', 'Drora', 'Guest')
 
 def now():
     return datetime.now(timezone.utc).isoformat()
@@ -24,6 +24,9 @@ def migrate(c):
       kind TEXT NOT NULL, occurred_at TEXT NOT NULL, details TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS user_activity_profile_time ON user_activity(profile_id,id DESC);
     ''')
+    # Multi-selection is temporary UI state, including for previously saved choices.
+    c.execute("UPDATE user_people_preferences SET preferences=json_remove(preferences,'$.selection') "
+              "WHERE json_valid(preferences) AND json_type(preferences,'$.selection') IS NOT NULL")
     c.executemany('INSERT OR IGNORE INTO user_profiles(id,name,created_at) VALUES(?,?,?)',
                   [(name.lower(), name, now()) for name in NAMES])
 
@@ -56,7 +59,7 @@ def select_profile(identity: str):
         return profile(c, identity)
 
 class Preferences(BaseModel):
-    theme: Literal['sage','ocean','plum','black','dark']
+    theme: Literal['sage','ocean','plum','black','dark','white']
     source_ids: list[str] = Field(max_length=1000)
     source_names: list[str] = Field(max_length=1000)
 
@@ -76,7 +79,8 @@ class PeopleDirections(BaseModel):
 
 class PeoplePreferences(BaseModel):
     known: bool = True
-    unknown: bool = True
+    unknown: bool = False
+    action: Literal["search", "edit"] = "search"
     sort: Literal['name','count'] = 'count'
     directions: PeopleDirections = Field(default_factory=PeopleDirections)
 

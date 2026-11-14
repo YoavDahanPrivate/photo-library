@@ -38,7 +38,7 @@ def test_password_lifecycle_and_isolation(account):
     assert c.get('/api/profiles/yoav/activity').json()[0]['kind']=='download_requested'
     with core.db() as db:
         assert db.execute("SELECT count(*) FROM user_activity WHERE profile_id='hila'").fetchone()[0]==0
-        assert db.execute('SELECT count(*) FROM account_passwords').fetchone()[0]==6
+        assert db.execute('SELECT count(*) FROM account_passwords').fetchone()[0]==7
         for r in db.execute('SELECT password_hash FROM account_passwords'):assert '1919' not in r[0]
     stranger=TestClient(c.app,base_url='https://localhost');stranger.cookies.set('dahan_account',token)
     assert stranger.get('/api/auth/me').status_code==401
@@ -128,3 +128,48 @@ def test_guest_excludes_desktop_public_and_proxy(account,peer,ua,headers):
 @pytest.mark.parametrize('ua',['Mozilla/5.0 (Web0S; Linux/SmartTV) AppleWebKit/537.36','Mozilla/5.0 HbbTV/1.5.1','Mozilla/5.0 (Linux; Android 9; BRAVIA)'])
 def test_tv_browser_families(account,ua):
     assert tv_client(account,ua=ua).get('/api/auth/me').json()['tv_guest']
+
+
+def test_drora_initial_password(account):
+    c, _ = account
+    assert {'id':'drora','name':'Drora'} in c.get('/api/auth/users').json()
+    result = login(c, 'drora', 'Drora1919').json()
+    assert result['name'] == 'Drora' and result['must_change']
+    assert c.get('/api/media').status_code == 403
+    assert not change(c, 'Drora1919', 'Drora private test password').json()['must_change']
+
+
+def test_guest_fixed_password_only(account):
+    c, core = account
+    assert c.post('/api/auth/login',json={'username':'guest','password':'Guest1919'}).status_code == 401
+    result = login(c, 'guest', 'Guest123456').json()
+    assert not result['must_change']
+    assert c.get('/api/media').status_code == 200
+    assert c.post('/api/auth/password',json={'current_password':'Guest123456','new_password':'different password'}).status_code == 403
+    assert c.post('/api/auth/passkeys/register/options',json={'password':'Guest123456'}).status_code == 403
+    assert c.post('/api/auth/passkeys/register/verify',json={'credential':{}}).status_code == 403
+    assert c.post('/api/auth/passkeys/login/options',json={'username':'Guest'}).status_code == 403
+    assert c.get('/api/auth/passkeys').status_code == 403
+    assert c.post('/api/auth/passkeys/fake/remove',json={'password':'Guest123456'}).status_code == 403
+    from backend import account_auth
+    with core.db() as db:
+        old_hash = db.execute("SELECT password_hash FROM account_passwords WHERE profile_id='guest'").fetchone()[0]
+        account_auth.migrate(db)
+        assert db.execute("SELECT password_hash FROM account_passwords WHERE profile_id='guest'").fetchone()[0] == old_hash
+    assert c.get('/api/auth/me').status_code == 200
+
+
+def test_guest_policy_migrates_existing_credentials_once(account):
+    c, core = account
+    from backend import account_auth
+    with core.db() as db:
+        db.execute("DELETE FROM account_policy_migrations WHERE id='guest-password-only-v1'")
+        db.execute("UPDATE account_passwords SET password_hash=?,must_change=1 WHERE profile_id='guest'", (account_auth.hash_password('old guest password'),))
+        db.execute("INSERT INTO account_sessions VALUES('old-guest','guest',?)", (time.time()+100,))
+        db.execute("INSERT INTO account_passkeys VALUES('guest-key','guest',X'00',0,'old',?,NULL)", ('2026-01-01',))
+        personal = db.execute("SELECT password_hash FROM account_passwords WHERE profile_id='yoav'").fetchone()[0]
+        account_auth.migrate(db)
+        assert not db.execute("SELECT 1 FROM account_sessions WHERE profile_id='guest'").fetchone()
+        assert not db.execute("SELECT 1 FROM account_passkeys WHERE profile_id='guest'").fetchone()
+        assert db.execute("SELECT password_hash FROM account_passwords WHERE profile_id='yoav'").fetchone()[0] == personal
+    assert not login(c,'guest','Guest123456').json()['must_change']

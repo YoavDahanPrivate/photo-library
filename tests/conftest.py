@@ -27,7 +27,7 @@ def reuse_disposable_account_seed_hashes(monkeypatch):
     # random salts) remains the real implementation for authentication tests.
     from backend import account_auth, user_profiles
     original = account_auth.hash_password
-    seeds = {name + "1919" for name in user_profiles.NAMES}
+    seeds = {name + "1919" for name in user_profiles.NAMES} | {"Guest123456"}
     def hash_password(password):
         if password not in seeds:
             return original(password)

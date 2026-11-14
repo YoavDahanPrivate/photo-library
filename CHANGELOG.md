@@ -1,3 +1,12 @@
+## 2026-11-14 — Search, People browsing, accounts and White theme
+
+- Wrap long search choices, show person thumbnails, and accept whole-month searches such as August 2024 or Aug 2024.
+- Add People helper sorting by alphabet or photo popularity, Countries/Cities filters, and an explained search-examples popup. Simplify Albums while retaining advanced media and orientation expressions.
+- Default People to known people and Search photos; open Includes results from a portrait or a temporary multi-selection. Preserve Edit people and save account display/action preferences, while keeping selection mode out of the database.
+- Add Drora with the normal first-sign-in password-change flow. Make Guest password-only, block password changes and passkeys, and invalidate previous Guest credentials through a one-time migration.
+- Add an account-persisted White theme with white surfaces and slate controls.
+- Cover search boundaries, identity disambiguation, account policy and preference migrations, and desktop/mobile interactions with regression tests. Verify deployed health and asset versions.
+
 ## 2026-11-13 — Portable release and responsive Library
 
 - Bundle-ready D: launcher checks the tunnel before starting the backend on 0.0.0.0:80 and the loopback gateway; repeated launches reuse running processes.

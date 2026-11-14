@@ -5,9 +5,9 @@ const server=http.createServer((req,res)=>{const file=path.join(root,new URL(req
 (async()=>{await new Promise(r=>server.listen(0,'127.0.0.1',r));const browser=await chromium.launch({channel:'msedge',headless:true});try{
 for(const viewport of [{width:1440,height:900},{width:390,height:844}]){
  const page=await browser.newPage({viewport,reducedMotion:'reduce',hasTouch:viewport.width<=760,isMobile:viewport.width<=760});const errors=[];page.setDefaultTimeout(7000);page.on('pageerror',e=>{errors.push(e.message);console.log('PAGE ERROR',e.stack)});await page.clock.install();let job={id:'fixture',state:'completed',phase:'Matches ready for review',started_at:Date.now()/1000-60,finished_at:Date.now()/1000,updated_at:Date.now()/1000,result:{suggestions:1}};let releaseMedia;const mediaGate=new Promise(resolve=>releaseMedia=resolve);let releaseNeighbors;const neighborsGate=new Promise(resolve=>releaseNeighbors=resolve);let releaseDetail;const detailGate=new Promise(resolve=>releaseDetail=resolve);let offsetSeen=0;const imageRequests=[];
- let identity='qa';const accounts={qa:null,other:null};
+ let preferenceWrites=0;let identity='qa';const accounts={qa:null,other:null};
  await page.route('**/api/**',async route=>{const u=new URL(route.request().url()),p=u.pathname;let json=[];
- if(p.endsWith('/people-preferences')&&route.request().method()==='PUT'){accounts[identity]=route.request().postDataJSON();json={people_browse:accounts[identity]};}
+ if(p.endsWith('/people-preferences')&&route.request().method()==='PUT'){preferenceWrites++;accounts[identity]=route.request().postDataJSON();json={people_browse:accounts[identity]};}
  else if(p==='/api/auth/me')json={people_browse:accounts[identity],id:identity,name:'QA',theme:'light',source_ids:null,source_names:null};
  else if(p==='/api/status')json={revision:1,total:240,counts:{ready:240},features:{}};
  else if(p==='/api/sync/status')json={running:false,runs:[],settings:{frequency:'daily',time:'02:00',weekday:0,month_day:1,timezone:'Asia/Jerusalem',auto_assign:false},next_due:null};
@@ -48,8 +48,8 @@ for(const viewport of [{width:1440,height:900},{width:390,height:844}]){
  await sort.selectOption('name');await page.getByRole('button',{name:'Descending people order'}).click();
  // Rapidly switch back to the original sort while older writes may still be pending.
  await sort.selectOption('count');await sort.selectOption('name');
- for(let i=0;i<10;i++){await page.clock.runFor(25);if(accounts.qa?.sort==='name'&&accounts.qa?.directions.name==='desc')break;}
- assert.equal(accounts.qa.sort,'name');assert.equal(accounts.qa.directions.name,'desc');
+ for(let i=0;i<100;i++){await new Promise(resolve=>setTimeout(resolve,50));if(preferenceWrites>=4&&accounts.qa?.sort==='name'&&accounts.qa?.directions.name==='desc')break;}
+ assert.equal(preferenceWrites,4,'Wait for the final queued save before reloading');assert.equal(accounts.qa.sort,'name');assert.equal(accounts.qa.directions.name,'desc');
  await page.evaluate(()=>localStorage.clear());await page.reload();await page.locator('.media-tile').first().waitFor();await enterPeople();assert.equal(await sort.inputValue(),'name');assert.equal(await page.getByRole('button',{name:'Descending people order'}).getAttribute('aria-pressed'),'true');
  identity='other';await page.reload();await page.locator('.media-tile').first().waitFor();await enterPeople();assert.equal(await sort.inputValue(),'count');
  identity='qa';await page.reload();await page.locator('.media-tile').first().waitFor();await enterPeople();assert.equal(await sort.inputValue(),'name');

@@ -1,10 +1,12 @@
+import SearchExamples from "./SearchExamples";
+import {isMonthPeriod} from "./dateSuggestions";
 import {consumeTouchClick} from "./touchActivation";
 import ResultsLoadingNotice from "./ResultsLoadingNotice";
 import {withMediaFilter,selectedMediaFilter} from "./mediaFilter";
 import {searchSuggestions,acceptSuggestion,normalizeSearch,deviceKey,type SearchItem,type Suggestion} from "./searchSuggestions";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { GeoMap, preloadMapBoundaries, emptyGeo, type GeoSelection } from "./SearchWorkspace";
-type Person = { id: number; name: string | null };
+type Person = { id: number; name: string | null; cover?: string | null; photo_count?: number };
 type Source = { phone: string; album: string; count: number };
 type Place = { id: string; label: string; kind: string; country: string; search_aliases?: string[] };
 const quote = (value: string) => JSON.stringify(value);
@@ -50,6 +52,10 @@ export default function UnifiedSearch({
   const lastCommitted = useRef<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
   const [personQuery, setPersonQuery] = useState("");
+  const [peopleSort, setPeopleSort] = useState("alphabet");
+  const [peopleOrder, setPeopleOrder] = useState("ascending");
+  const [placeKind, setPlaceKind] = useState("");
+  const [examplesOpen, setExamplesOpen] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
   const [excluded, setExcluded] = useState<string[]>([]);
   const [mode, setMode] = useState("Includes");
@@ -60,8 +66,6 @@ export default function UnifiedSearch({
   const [dates, setDates] = useState({ from: "", until: "" });
   const [albumQuery, setAlbumQuery] = useState("");
   const [albums, setAlbums] = useState<string[]>([]);
-  const [kind, setKind] = useState("");
-  const [orientation, setOrientation] = useState("");
   const [mapResults, setMapResults] = useState({
     points: [],
     total: 0,
@@ -103,6 +107,8 @@ export default function UnifiedSearch({
       .filter((p) => p.id > 0 && p.name?.trim())
       .map((p) => ({
         id: p.id,
+        cover: p.cover,
+        photoCount: p.photo_count ?? 0,
         name: p.name!,
         label:
           (counts.get(p.name!.toLowerCase()) || 0) > 1
@@ -114,7 +120,7 @@ export default function UnifiedSearch({
     {label:"Photos only",value:"photo",kind:"Media",aliases:["photos","images","only photos","only images"]},
     {label:"Videos only",value:"video",kind:"Media",aliases:["videos","only videos"]},
     {label:"All phones",value:"__all_phones__",kind:"Device",aliases:["All Phone","All devices"]},
-    ...labels.map(p=>({label:p.label,value:p.label,kind:"Person"})),
+    ...labels.map(p=>({label:p.label,value:p.label,kind:"Person",thumbnail:p.cover?`/api/faces/${encodeURIComponent(p.cover)}/thumbnail`:undefined})),
     ...places.map(p=>({label:p.kind==="city"?p.label+" · "+p.country:p.label,value:p.id,kind:p.kind==="country"?"Country":"City",aliases:[p.label,...p.search_aliases||[]]})),
     ...[...new Set(sources.map(s=>s.phone))].map(p=>({label:p,value:p,kind:"Device"})),
     ...sources.map(s=>({label:s.album+" · "+s.phone,value:s.phone+"\x1f"+s.album,kind:"Album",aliases:[s.album]}))
@@ -137,8 +143,6 @@ export default function UnifiedSearch({
     setMapGeneration(n=>n+1);
     setDates({ from: "", until: "" });
     setAlbums([]);
-    setKind("");
-    setOrientation("");
   }
   useEffect(() => {
     if (lastCommitted.current === expression) return;
@@ -218,6 +222,7 @@ export default function UnifiedSearch({
     } catch {}
     setSuggestionsOpen(false);
     try {
+      if(isMonthPeriod(value)) value="in "+value;
       if(value && !/^(includes|only|just|person|place|not|date|phone|allphones|album|mediatype|orientation|text|area|location|after|before|between|since|until|through|on|in|during)\b|[()<>=!]|&&|\|\|/i.test(value) && !/\b(and|or)\b/i.test(bare)){
         const knownPlaces=await loadPlaces();
         const person=labels.some(p=>normalizeSearch(p.name)===normalizeSearch(bare)||normalizeSearch(p.label)===normalizeSearch(bare));
@@ -337,14 +342,14 @@ export default function UnifiedSearch({
               {suggestions.map((s,i)=><button type="button" role="option" id={"search-suggestion-"+i} aria-selected={i===activeSuggestion} key={s.kind+":"+s.label+":"+i} onPointerDown={e=>{suppressSuggestionClick.current=false;if(e.pointerType!=="mouse")suggestionTouch.current={x:e.clientX,y:e.clientY};e.preventDefault();}}
                 onPointerUp={e=>{const start=suggestionTouch.current;suggestionTouch.current=null;if(e.pointerType!=="mouse"&&start&&Math.hypot(e.clientX-start.x,e.clientY-start.y)<10){e.preventDefault();suppressSuggestionClick.current=true;consumeTouchClick();complete(s);}}}
                 onPointerCancel={()=>{suggestionTouch.current=null;}}
-                onClick={e=>{if(suppressSuggestionClick.current&&e.detail!==0){suppressSuggestionClick.current=false;return;}complete(s);}}><span>{s.label}</span><small>{s.kind}</small></button>)}
+                onClick={e=>{if(suppressSuggestionClick.current&&e.detail!==0){suppressSuggestionClick.current=false;return;}complete(s);}}><span className="search-option-content">{s.thumbnail && <img className="search-person-thumbnail" src={s.thumbnail} alt="" loading="lazy" onError={e=>{e.currentTarget.style.display="none";}}/>}<span className="search-option-text">{s.label}</span></span><small>{s.kind}</small></button>)}
             </div>}
             <button className="primary" disabled={busy}>
               {busy ? "Checking…" : "Search"}
             </button>
           </form>
           <nav aria-label="Search helpers">
-            {["People", "Places", "Dates", "Media", "Albums & more", "Map"].map(
+            {["People", "Places", "Dates", "Albums", "Map"].map(
               (name) => (
                 <button
                   key={name}
@@ -356,6 +361,7 @@ export default function UnifiedSearch({
                 </button>
               ),
             )}
+            <button type="button" aria-haspopup="dialog" onClick={()=>setExamplesOpen(true)}>Examples</button>
           </nav>
         </div>
         <span className="search-status-announcement" role="status">{draft !== expression ? "Search changed. Press Search or Enter to apply." : "Search applied"}</span>
@@ -365,6 +371,7 @@ export default function UnifiedSearch({
           </p>
         )}
       </header>
+      {examplesOpen && <SearchExamples onClose={()=>setExamplesOpen(false)}/>}
       {searchOpen && expression && <div className="library-active-search"><span>Search: {expression}</span><button onClick={()=>{editDraft('',0);}}>Clear search</button></div>}
 
       {searchOpen && panel && (
@@ -407,6 +414,10 @@ export default function UnifiedSearch({
                     </button>
                   ))}
                 </div>
+                <div className="search-view-controls">
+                  <label>View by<select aria-label="People view by" value={peopleSort} onChange={e=>setPeopleSort(e.target.value)}><option value="alphabet">Alphabet</option><option value="popularity">Popularity (number of photos)</option></select></label>
+                  <label>Sort order<select aria-label="People sort order" value={peopleOrder} onChange={e=>setPeopleOrder(e.target.value)}><option value="ascending">Ascending</option><option value="descending">Descending</option></select></label>
+                </div>
                 <input
                   aria-label="Find named people"
                   placeholder="Find a saved person"
@@ -418,6 +429,11 @@ export default function UnifiedSearch({
                     .filter((p) =>
                       p.name.toLowerCase().includes(personQuery.toLowerCase()),
                     )
+                    .sort((a,b)=>{
+                      const direction=peopleOrder === "ascending" ? 1 : -1;
+                      const alphabetical=a.label.localeCompare(b.label,undefined,{sensitivity:"base"});
+                      return peopleSort === "popularity" ? (a.photoCount-b.photoCount)*direction || alphabetical : alphabetical*direction;
+                    })
                     .map((p) => (
                       <label key={p.id}>
                         <input
@@ -425,7 +441,8 @@ export default function UnifiedSearch({
                           checked={selected.includes(p.label)}
                           onChange={() => peoplePart(toggle(selected, p.label))}
                         />
-                        {p.label}
+                        {p.cover && <img className="search-person-thumbnail" src={`/api/faces/${encodeURIComponent(p.cover)}/thumbnail`} alt="" loading="lazy" onError={e=>{e.currentTarget.style.display="none";}}/>}
+                        <span className="search-option-text">{p.label}<small className="search-photo-count">{p.photoCount.toLocaleString()} {p.photoCount===1?"photo":"photos"}</small></span>
                       </label>
                     ))}
                 </div>
@@ -480,6 +497,7 @@ export default function UnifiedSearch({
             )}
             {panel === "Places" && (
               <>
+                <div className="search-view-controls"><label>View filter<select aria-label="Place view filter" value={placeKind} onChange={e=>setPlaceKind(e.target.value)}><option value="">Countries &amp; cities</option><option value="country">Countries</option><option value="city">Cities</option></select></label></div>
                 <input
                   aria-label="Find countries and cities"
                   placeholder="Country or city"
@@ -500,6 +518,7 @@ export default function UnifiedSearch({
                 </label>
                 <div className="helper-options">
                   {places
+                    .filter(p=>!placeKind || p.kind===placeKind)
                     .filter((p) =>
                       (p.label + " " + p.country)
                         .toLowerCase()
@@ -531,10 +550,9 @@ export default function UnifiedSearch({
                 </button>
               </>
             )}
-            {panel === "Media" && <div className="builder-actions">{[["","Photos & videos"],["photo","Photos only"],["video","Videos only"]].map(([value,label])=><button key={label} aria-pressed={kind===value} onClick={()=>{setKind(value);update("kind",value?'MediaType('+quote(value)+')':'');}}>{label}</button>)}</div>}
             {panel === "Dates" && (
               <>
-                <p>Choose an inclusive date range, or type a date phrase in search.</p>
+                <p>Choose an inclusive date range, or type a month in search, such as August 2024 or Aug 2024.</p>
                 <label><input type="checkbox" checked={parts.missing_date==='Location("no_date")'} onChange={e=>update('missing_date',e.target.checked?'Location("no_date")':'')}/>Capture date unknown</label><p className="small-note">Estimated year/month/range values match overlapping date searches.</p>
                 <p className="small-note">Try “after May 2025”, “between May 2025 and April 2026”, or “&gt; May 21. 2024”. After/before exclude the named day or month; between includes both endpoints.</p>
                 <div className="date-inputs">
@@ -586,51 +604,8 @@ export default function UnifiedSearch({
                 </button>
               </>
             )}
-            {panel === "Albums & more" && (
+            {panel === "Albums" && (
               <>
-                <div className="builder-actions">
-                  <label>
-                    Media type
-                    <select
-                      aria-label="Media type"
-                      value={kind}
-                      onChange={(e) => {
-                        setKind(e.target.value);
-                        update(
-                          "kind",
-                          e.target.value
-                            ? `MediaType(${quote(e.target.value)})`
-                            : "",
-                        );
-                      }}
-                    >
-                      <option value="">All media</option>
-                      <option value="photo">Photos</option>
-                      <option value="video">Videos</option>
-                    </select>
-                  </label>
-                  <label>
-                    Orientation
-                    <select
-                      aria-label="Image orientation"
-                      value={orientation}
-                      onChange={(e) => {
-                        setOrientation(e.target.value);
-                        update(
-                          "orientation",
-                          e.target.value
-                            ? `Orientation(${quote(e.target.value)})`
-                            : "",
-                        );
-                      }}
-                    >
-                      <option value="">Any orientation</option>
-                      <option value="portrait">Portrait</option>
-                      <option value="landscape">Landscape</option>
-                      <option value="square">Square</option>
-                    </select>
-                  </label>
-                </div>
                 <input
                   aria-label="Find albums"
                   placeholder="Find an album"
@@ -662,7 +637,7 @@ export default function UnifiedSearch({
                               );
                             }}
                           />
-                          {s.album || "Main folder"} · {s.phone}
+                          <span className="search-option-text">{s.album || "Main folder"} · {s.phone}</span>
                         </label>
                       );
                     })}

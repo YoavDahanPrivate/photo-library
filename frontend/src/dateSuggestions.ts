@@ -1,6 +1,7 @@
 import type {Suggestion} from "./searchSuggestions";
 export const datePhrases=["after","before","between","since","until","on","in","during","on or after","on or before"];
 const months=["January","February","March","April","May","June","July","August","September","October","November","December"];
+export const isMonthPeriod=(value:string)=>/^(?:January|Jan|February|Feb|March|Mar|April|Apr|May|June|Jun|July|Jul|August|Aug|September|Sept|Sep|October|Oct|November|Nov|December|Dec)\.?\s+\d{4}$/i.test(value.trim());
 const tidy=(s:string)=>s.toLowerCase().replace(/(\d)(st|nd|rd|th)\b/g,"$1").replace(/[.,]/g," ").replace(/\s+/g," ").trim();
 function calendarChoices(fragment:string,now:Date):string[]{
  const f=tidy(fragment),year=now.getFullYear();
@@ -27,7 +28,12 @@ export function dateSuggestions(text:string,cursor:number,now=new Date()):Sugges
  const starts=/(?:^|[()]|\b(?:and|or|not)\b|&&|\|\|)\s*((?:date\s+)?(?:on\s+or\s+after|on\s+or\s+before|after|before|between|since|until|through|on|in|during)\s+|(?:date\s+)?(?:>=|<=|==|!=|>|<|=)\s*)/gi;
  let match:RegExpExecArray|null,last:RegExpExecArray|null=null;
  while((match=starts.exec(safe)))last=match;
- if(!last)return null;
+ if(!last){
+  const bare=/(?:^|[()]|\b(?:and|or|not)\b|&&|\|\|)\s*([a-z]+\.?\s+\d{4})$/i.exec(safe);
+  if(!bare || !isMonthPeriod(bare[1]))return null;
+  const start=before.length-bare[1].length;
+  return [{label:bare[1],kind:"Entire month",insert:"in "+bare[1],start,end:cursor}];
+ }
  const op=last[1].toLowerCase().trim().replace(/^date\s+/,""),begin=last.index+last[0].length;
  let start=begin,fragment=before.slice(begin),second=false;
  if(op==="between"){

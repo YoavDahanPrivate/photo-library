@@ -635,7 +635,7 @@ def people():
         result = [
             dict(r)
             for r in c.execute(
-                f"SELECT p.id,p.name,count(f.id) count,min(f.id) cover FROM people p JOIN faces f ON f.person_id=p.id WHERE f.status!='dismissed' AND EXISTS(SELECT 1 FROM media m WHERE m.id=f.media_id AND m.status='ready' AND {source_management.VISIBLE}) AND NOT EXISTS(SELECT 1 FROM unknown_faces u WHERE u.face_id=f.id) GROUP BY p.id ORDER BY p.name IS NULL,p.name,count(f.id) DESC"
+                f"SELECT p.id,p.name,count(f.id) count,count(DISTINCT CASE WHEN m.kind='photo' THEN m.id END) photo_count,min(f.id) cover FROM people p JOIN faces f ON f.person_id=p.id JOIN media m ON m.id=f.media_id WHERE f.status!='dismissed' AND m.status='ready' AND {source_management.VISIBLE} AND NOT EXISTS(SELECT 1 FROM unknown_faces u WHERE u.face_id=f.id) GROUP BY p.id ORDER BY p.name IS NULL,p.name,count(f.id) DESC"
             )
         ]
         unassigned = c.execute(

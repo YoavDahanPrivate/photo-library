@@ -51,3 +51,14 @@ def test_symbol_operators(client,op,expected):
         db.execute("UPDATE media SET taken='2025-06-01T00:00:00' WHERE id='2'")
     assert ids(c,op+' May 2025')==expected
     assert ids(c,'date '+op+' May 2025')==expected
+
+@pytest.mark.parametrize('phrase', ['August 2024', 'Aug 2024', 'aug. 2024', 'AUGUST 2024'])
+def test_bare_month_search(client, phrase):
+    c, core = client
+    with core.db() as db:
+        db.execute("UPDATE media SET taken='2024-08-01T00:00:00' WHERE id='0'")
+        db.execute("UPDATE media SET taken='2024-08-31T23:59:59' WHERE id='1'")
+        db.execute("UPDATE media SET taken='2024-09-01T00:00:00' WHERE id='2'")
+    assert ids(c, phrase) == {'0', '1'}
+    assert ids(c, 'Maya and ' + phrase) == {'0', '1'}
+    assert ids(c, 'not (' + phrase + ')') == {'2'}
