@@ -1,3 +1,4 @@
+import {readApiResponse} from "./ApiResponse";
 import {consumeTouchClick} from "./touchActivation";
 import SaveMedia from "./SaveMedia";
 import React,{useEffect,useRef,useState} from "react";
@@ -10,6 +11,10 @@ export default function MediaViewerStage(p:Props){
  const [zoom,setZoom]=useState(1),[pan,setPan]=useState({x:0,y:0}),[box,setBox]=useState({w:0,h:0}),[intrinsic,setIntrinsic]=useState({w:p.width||1,h:p.height||1});
  const [departing,setDeparting]=useState(!!p.departingImage&&p.direction!=="none");
  const [localVideo,setLocalVideo]=useState(""),[playingVideo,setPlayingVideo]=useState(false),[videoError,setVideoError]=useState(""),[videoLoading,setVideoLoading]=useState(false);
+ const [imageLoading,setImageLoading]=useState(true),[imageError,setImageError]=useState("");
+ const [smallFallback,setSmallFallback]=useState(false),[imageAttempt,setImageAttempt]=useState(0),[videoAttempt,setVideoAttempt]=useState(0);
+ const imageTimer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined);
+ const imageElement=useRef<HTMLImageElement>(null),videoRequest=useRef<AbortController|null>(null);
  const [playing,setPlaying]=useState(false),[muted,setMuted]=useState(false),[time,setTime]=useState(0),[duration,setDuration]=useState(0);
  const viewport=useRef<HTMLDivElement>(null),video=useRef<HTMLVideoElement>(null),hideTimer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined),alive=useRef(true);
  const pointers=useRef(new Map<number,{x:number;y:number}>()),pinch=useRef<{distance:number;zoom:number}|null>(null),wasPinch=useRef(false);
@@ -29,6 +34,32 @@ export default function MediaViewerStage(p:Props){
  };
  const highWanted=p.kind==="photo"&&p.expanded;
  const activeVideo=(playingVideo||!!p.videoUrl||!!localVideo)&&p.expanded?"/api/media/"+p.id+"/original":localVideo||p.videoUrl;
+ const withRetry=(url:string,attempt:number)=>attempt?url+(url.includes('?')?'&':'?')+'retry='+attempt:url;
+ const thumbnail=smallFallback?p.imageUrl.replace(/([?&]size=)large/, '$1small'):p.imageUrl;
+ const imageSource=withRetry(highWanted&&highReady?"/api/media/"+p.id+"/display-original":thumbnail,imageAttempt);
+ useEffect(()=>{
+   if(activeVideo){setImageLoading(false);setImageError("");return;}
+   setImageError("");
+   const loaded=!!imageElement.current?.complete&&!!imageElement.current?.naturalWidth;
+   setImageLoading(!loaded);
+   if(loaded)return;
+   imageTimer.current=setTimeout(()=>{if(imageElement.current?.complete&&imageElement.current.naturalWidth)return;setImageLoading(false);setImageError("The preview is taking too long to load. Check your connection and retry.");},15000);
+   return()=>clearTimeout(imageTimer.current);
+ },[imageSource,activeVideo]);
+ useEffect(()=>{
+   if(!highWanted||highReady||highError)return;
+   const timer=setTimeout(()=>setHighError(true),15000);return()=>clearTimeout(timer);
+ },[highWanted,highReady,highError]);
+ useEffect(()=>{
+   if(!activeVideo)return;
+   setVideoLoading(true);setVideoError("");
+ },[activeVideo,videoAttempt]);
+ useEffect(()=>{
+   if(!activeVideo||!videoLoading)return;
+   const timer=setTimeout(()=>{setVideoLoading(false);setVideoError("The video is taking too long to load. Retry playback or download the original.");},20000);
+   return()=>clearTimeout(timer);
+ },[activeVideo,videoLoading,videoAttempt]);
+ useEffect(()=>()=>videoRequest.current?.abort(),[]);
  const reveal=()=>{setControls(true);clearTimeout(hideTimer.current);hideTimer.current=setTimeout(()=>setControls(false),2800);};
  useEffect(()=>{alive.current=true;reveal();return()=>{alive.current=false;clearTimeout(hideTimer.current);};},[]);
  useEffect(()=>{const el=viewport.current;if(!el)return;const observer=new ResizeObserver(entries=>{const r=entries[0].contentRect;setBox({w:r.width,h:r.height});});observer.observe(el);return()=>observer.disconnect();},[]);
@@ -56,14 +87,17 @@ export default function MediaViewerStage(p:Props){
  const startVideo=async()=>{
    setVideoError("");setPlayingVideo(true);setVideoLoading(true);reveal();
    if(p.expanded)return;
-   try{const r=await fetch("/api/media/"+p.id+"/preview",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});const data=await r.json();if(!r.ok)throw Error(data.detail||"Could not prepare video");if(alive.current)setLocalVideo(data.url);}
-   catch(e){if(alive.current){setVideoLoading(false);setPlayingVideo(false);setVideoError(String(e));}}
+   videoRequest.current?.abort();const controller=new AbortController();videoRequest.current=controller;
+   const timeout=setTimeout(()=>controller.abort(),45000);
+   try{const r=await fetch("/api/media/"+p.id+"/preview",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}",signal:controller.signal});const data=await readApiResponse<{url:string}>(r);if(!data?.url)throw Error("Video preview unavailable");if(alive.current&&videoRequest.current===controller)setLocalVideo(data.url);}
+   catch(e){if(alive.current&&videoRequest.current===controller){setVideoLoading(false);setPlayingVideo(false);setVideoError(controller.signal.aborted?"Preparing the video timed out. Retry or download the original.":String(e));}}
+   finally{clearTimeout(timeout);}
  };
  useEffect(()=>{if(playingVideo&&!p.expanded&&!localVideo&&!p.videoUrl)void startVideo();},[p.expanded]);
  const style={width:w||"100%",height:h||"100%",transform:"translate("+pan.x+"px,"+pan.y+"px) scale("+zoom+")"};
  const resetGesture=()=>{pointers.current.clear();pinch.current=null;drag.current=null;wasPinch.current=false;swipeAxis.current=null;};
  const button=(label:string,icon:React.ReactNode,action:()=>void,disabled=false)=><button type="button" aria-label={label} title={label} onClick={action} disabled={disabled}>{icon}</button>;
- return <div className={"media-stage gentle-viewer"+((controls||saveOpen)?" controls-visible":"")} onPointerMove={e=>{if(e.pointerType==="mouse")reveal();}}>
+ return <div className={"media-stage gentle-viewer"+((controls||saveOpen||imageLoading||!!imageError||videoLoading||!!videoError||!!activeVideo&&!playing)?" controls-visible":"")} onPointerMove={e=>{if(e.pointerType==="mouse")reveal();}}>
    <div ref={viewport} className={"media-viewport"+(zoom>1?" pannable":"")+(p.expanded?" expanded-gestures":"")} aria-label="Media preview"
      onDoubleClick={e=>{if(pointerKind.current==="mouse"){changeZoom(zoom>1?1:2);reveal();}}}
      onPointerDown={e=>{if(swipeLocked.current||p.busy||p.closing)return;setSettling(false);swipeAxis.current=null;pointerKind.current=e.pointerType;e.currentTarget.setPointerCapture(e.pointerId);pointers.current.set(e.pointerId,{x:e.clientX,y:e.clientY});drag.current={x:e.clientX,y:e.clientY,px:pan.x,py:pan.y,started:Date.now()};if(pointers.current.size===2){p.onDismissProgress(0);moveSwipe(0);setDragging(false);wasPinch.current=true;const [a,b]=[...pointers.current.values()];pinch.current={distance:Math.hypot(a.x-b.x,a.y-b.y),zoom};}}}
@@ -77,12 +111,14 @@ export default function MediaViewerStage(p:Props){
      {departing&&!dragging&&!settling&&<div className={"departing-frame motion-"+p.direction} onAnimationEnd={()=>setDeparting(false)}><img src={p.departingImage} alt="" aria-hidden="true"/></div>}
      {(dragging||settling)&&[[-1,p.previous],[1,p.next]].map(([side,id])=>id&&<div key={String(side)} className="swipe-neighbor" style={{transform:'translateX('+(Number(side)*box.w+swipeX)+'px)',transition:settling?'transform 220ms cubic-bezier(.2,.7,.2,1)':'none'}} aria-hidden="true"><img src={'/api/media/'+id+'/thumbnail?size=large'} alt="" draggable={false}/></div>)}
      <div className={"incoming-frame motion-"+p.direction+(dragging||settling?" finger-tracking":"")} style={dragging||settling?{animation:'none',transform:'translateX('+swipeX+'px)',transition:settling?'transform 220ms cubic-bezier(.2,.7,.2,1)':'none'}:undefined}>
-       {activeVideo?<video ref={video} style={style} src={activeVideo} autoPlay playsInline muted={muted}
-         onLoadStart={()=>setVideoLoading(true)} onWaiting={()=>setVideoLoading(true)} onCanPlay={()=>setVideoLoading(false)}
+       {activeVideo?<video ref={video} style={style} src={withRetry(activeVideo,videoAttempt)} poster={p.imageUrl} autoPlay playsInline muted={muted}
+         onLoadStart={()=>setVideoLoading(true)} onWaiting={()=>setVideoLoading(true)} onCanPlay={()=>{setVideoLoading(false);setVideoError("");}} onPlaying={()=>{setVideoLoading(false);setVideoError("");}}
          onError={()=>{setVideoLoading(false);setVideoError(p.expanded?"This browser cannot play the original codec. Collapse for a compatible preview, or download the original.":"Video preview unavailable. Try Download.");}}
          onLoadedMetadata={e=>{setIntrinsic({w:e.currentTarget.videoWidth||p.width,h:e.currentTarget.videoHeight||p.height});setDuration(Number.isFinite(e.currentTarget.duration)?e.currentTarget.duration:0);}}
          onTimeUpdate={e=>setTime(e.currentTarget.currentTime)} onPlay={()=>setPlaying(true)} onPause={()=>setPlaying(false)}/>
-       :<img style={style} src={highWanted&&highReady?"/api/media/"+p.id+"/display-original":p.imageUrl} alt={p.name} draggable={false} onLoad={e=>setIntrinsic({w:e.currentTarget.naturalWidth,h:e.currentTarget.naturalHeight})}/>}
+       :<img ref={imageElement} style={style} src={imageSource} alt={p.name} draggable={false}
+         onLoad={e=>{clearTimeout(imageTimer.current);setIntrinsic({w:e.currentTarget.naturalWidth,h:e.currentTarget.naturalHeight});setImageLoading(false);setImageError("");}}
+         onError={()=>{clearTimeout(imageTimer.current);if(highWanted&&highReady){setHighReady(false);setHighError(true);}else if(!smallFallback&&thumbnail.includes('size=large'))setSmallFallback(true);else{setImageLoading(false);setImageError("This preview could not be loaded. Retry or download the original.");}}}/>}
      </div>
      {highWanted&&!highReady&&!highError&&<img className="high-resolution-loader" src={"/api/media/"+p.id+"/display-original"} alt="" aria-hidden="true" onLoad={()=>setHighReady(true)} onError={()=>setHighError(true)}/>}
    </div>
@@ -99,9 +135,10 @@ export default function MediaViewerStage(p:Props){
    </div>
    <div className="viewer-overlay-controls overlay-previous">{button("Previous image or video",<ChevronLeft/>,()=>navigate(p.previous),!p.previous||p.busy)}</div>
    <div className="viewer-overlay-controls overlay-next">{button("Next image or video",<ChevronRight/>,()=>navigate(p.next),!p.next||p.busy)}</div>
-   {(p.busy||(highWanted&&!highReady&&!highError)||videoLoading)&&<div className="media-loading" role="status"><LoaderCircle className="spin" size={18}/>{p.busy?"Loading image…":videoLoading?"Loading video…":"Loading original resolution…"}</div>}
-   {((highWanted&&highError)||videoError)&&<div className="media-load-error" role="status">{videoError||"Original unavailable. Showing large preview; try Download."}</div>}
-   {p.kind==="video"&&!activeVideo&&!videoLoading&&<div className="viewer-overlay-controls overlay-play">{button(p.expanded?"Play original video":"Play video preview",<Play/>,()=>void startVideo())}</div>}
+   {(p.busy||imageLoading||(highWanted&&!highReady&&!highError)||videoLoading)&&<div className="media-loading" role="status"><LoaderCircle className="spin" size={18}/>{(p.busy||imageLoading)?"Loading image…":videoLoading?"Loading video…":"Loading original resolution…"}</div>}
+   {(imageError||videoError)&&<div className="media-load-error preview-recovery" role="alert"><span>{videoError||imageError}</span><button onClick={()=>{if(videoError){setVideoError("");if(activeVideo)setVideoAttempt(n=>n+1);else void startVideo();}else{setImageError("");setSmallFallback(false);setImageAttempt(n=>n+1);}}}>Retry preview</button></div>}
+   {highWanted&&highError&&!imageError&&!videoError&&<div className="media-load-error" role="status">Original unavailable. Showing a thumbnail; try Download.</div>}
+   {p.kind==="video"&&!activeVideo&&!videoLoading&&!videoError&&<div className="viewer-overlay-controls overlay-play">{button(p.expanded?"Play original video":"Play video preview",<Play/>,()=>void startVideo())}</div>}
    <div className="viewer-overlay-controls overlay-bottom">
      {activeVideo&&<div className="overlay-playback">{button(playing?"Pause video":"Play video",playing?<Pause/>:<Play/>,()=>{if(video.current?.paused)void video.current.play().catch(()=>setPlaying(false));else video.current?.pause();})}<input aria-label="Video position" type="range" min="0" max={duration||1} step="0.1" value={time} onChange={e=>{if(video.current)video.current.currentTime=Number(e.target.value);setTime(Number(e.target.value));}}/>{button(muted?"Unmute":"Mute",muted?<VolumeX/>:<Volume2/>,()=>setMuted(v=>!v))}</div>}
      <div className="overlay-zoom">{button("Zoom out",<Minus/>,()=>changeZoom(zoom-.5),zoom<=1)}<output aria-label="Zoom level">{Math.round(zoom*100)}%</output>{button("Zoom in",<Plus/>,()=>changeZoom(zoom+.5),zoom>=6)}{button("Fit to view",<RotateCcw/>,()=>changeZoom(1))}</div>

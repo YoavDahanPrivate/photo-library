@@ -2,6 +2,8 @@
 
 - Wrap long search choices, show person thumbnails, and accept whole-month searches such as August 2024 or Aug 2024.
 - Add People helper sorting by alphabet or photo popularity, Countries/Cities filters, and an explained search-examples popup. Simplify Albums while retaining advanced media and orientation expressions.
+- Keep People portraits anchored when selection mode changes and add a floating Find photos action. Show retryable photo/video preview failures and timeouts instead of leaving an empty viewer.
+- Long-press a People portrait to enter multi-selection and select it, or exit multi-selection without opening results. Cancel holds during movement and consume the release click.
 - Default People to known people and Search photos; open Includes results from a portrait or a temporary multi-selection. Preserve Edit people and save account display/action preferences, while keeping selection mode out of the database.
 - Add Drora with the normal first-sign-in password-change flow. Make Guest password-only, block password changes and passkeys, and invalidate previous Guest credentials through a one-time migration.
 - Add an account-persisted White theme with white surfaces and slate controls.

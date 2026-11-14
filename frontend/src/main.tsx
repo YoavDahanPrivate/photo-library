@@ -1,3 +1,4 @@
+import PeoplePortraitButton from "./PeoplePortraitButton";
 import useLibraryViewport from "./useLibraryViewport";
 import MediaInfoSheet from "./MediaInfoSheet";
 import {SlidersHorizontal} from "lucide-react";
@@ -342,7 +343,7 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
   const peopleSearchMode=peopleBrowse.preferences.action==='search';
   const peopleSelectionMode=peopleSearchMode&&peopleBrowse.selectionMode;
   const selectedSearchPeople=visiblePeople.filter(p=>searchPeopleIds.includes(p.id));
-  useEffect(()=>{setSearchPeopleIds([]);},[peopleBrowse.preferences.known,peopleBrowse.preferences.unknown,peopleBrowse.preferences.action,peopleBrowse.selectionMode]);
+  useEffect(()=>{setSearchPeopleIds([]);},[peopleBrowse.preferences.known,peopleBrowse.preferences.unknown,peopleBrowse.preferences.action,page,group,settingsOpen]);
   const toggleSearchPerson=(id:number)=>setSearchPeopleIds(old=>old.includes(id)?old.filter(value=>value!==id):[...old,id]);
   useEffect(()=>{setPeopleLimit(120);},[peopleBrowse.preferences]);
   useEffect(()=>{setSelectedGroups([]);},[peopleBrowse.preferences.known,peopleBrowse.preferences.unknown,peopleBrowse.preferences.action]);
@@ -1484,14 +1485,15 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
             </div>
             {group === null ? (
               <>
-                <PeopleBrowse browse={peopleBrowse}/>
-                {peopleSelectionMode&&<section className="group-selection-bar" aria-label="Find photos with selected people">
+                <PeopleBrowse browse={{...peopleBrowse,selection:value=>{setSearchPeopleIds([]);peopleBrowse.selection(value);}}}/>
+                {peopleSelectionMode&&createPortal(<section className="people-selection-float" aria-label="Find photos with selected people">
                   <strong role="status">{selectedSearchPeople.length} selected</strong>
                   <div className="builder-actions">
                     <button className="primary" disabled={!selectedSearchPeople.length||peopleSearchBusy} onClick={()=>void findPeoplePhotos(selectedSearchPeople)}>{peopleSearchBusy?'Finding…':'Find photos'}</button>
                     <button disabled={!searchPeopleIds.length||peopleSearchBusy} onClick={()=>setSearchPeopleIds([])}>Deselect all</button>
-                  </div><p className="small-note">Find photos containing every selected person. Other people may also appear. Unknown People and Unassigned faces match photos containing faces in those collections.</p>
-                </section>}
+                    <button disabled={peopleSearchBusy} onClick={()=>{setSearchPeopleIds([]);peopleBrowse.selection(false);}}>Done</button>
+                  </div>
+                </section>,document.body)}
                 {!peopleSearchMode&&peopleBrowse.preferences.unknown&&!!unnamedGroups.length&&<section
                   className="group-selection-bar"
                   aria-label="Select unnamed groups"
@@ -1560,7 +1562,7 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
                       key={p.id}
                       data-person-card={p.id}
                     >
-                      {peopleSelectionMode&&<label className="group-checkbox"><input type="checkbox" aria-label={`Select ${personLabel(p)}`} checked={searchPeopleIds.includes(p.id)} disabled={peopleSearchBusy} onChange={()=>toggleSearchPerson(p.id)}/><span>Select</span></label>}
+                      {peopleSelectionMode&&<label className="group-checkbox portrait-selection-checkbox"><input type="checkbox" aria-label={`Select ${personLabel(p)}`} checked={searchPeopleIds.includes(p.id)} disabled={peopleSearchBusy} onChange={()=>toggleSearchPerson(p.id)}/><span>Select</span></label>}
                       {!peopleSearchMode && p.id > 0 && !p.name?.trim() && (
                         <label className="group-checkbox">
                           <input
@@ -1579,16 +1581,21 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
                           <span>Select group</span>
                         </label>
                       )}
-                      <button
+                      <PeoplePortraitButton
                         className="person-card"
                         key={p.id}
                         disabled={peopleSearchBusy}
+                        onLongPress={peopleSearchMode?()=>{
+                          if(peopleSelectionMode){peopleBrowse.selection(false);setSearchPeopleIds([]);}
+                          else {peopleBrowse.selection(true);setSearchPeopleIds([p.id]);}
+                        }:undefined}
                         aria-pressed={peopleSelectionMode?searchPeopleIds.includes(p.id):undefined}
                         onClick={() => peopleSearchMode ? peopleSelectionMode ? toggleSearchPerson(p.id) : void findPeoplePhotos([p]) : openPeopleGroup(p.id)}
                       >
                         <img
                           src={faceThumb(p.cover)}
                           loading="lazy"
+                          draggable={false}
                           alt="Suggested face group"
                         />
                         <strong>{personLabel(p)}</strong>
@@ -1602,7 +1609,7 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
                                 ? "Named"
                                 : "Needs review"}
                         </small>
-                      </button>
+                      </PeoplePortraitButton>
                     </div>
                   ))}
                 </div>

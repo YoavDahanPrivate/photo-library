@@ -43,6 +43,29 @@ for(const viewport of [{width:1440,height:900},{width:390,height:844}]){
  assert.equal(await page.locator('[data-person-card]').count(),3);
  assert.equal(await page.locator('.people-grid input[type=checkbox]').count(),0);
  assert.equal(await page.getByRole('region',{name:'Select unnamed groups'}).count(),0);
+
+ let validationCount=0;page.on('request',r=>{if(new URL(r.url()).pathname==='/api/search/validate')validationCount++;});
+ const cdp=viewport.width<=760?await page.context().newCDPSession(page):null;
+ const pressPortrait=async(id,{move=false,cancel=false}={})=>{
+   await card(id).scrollIntoViewIfNeeded();const box=await card(id).locator('img').boundingBox(),x=box.x+box.width/2,y=box.y+box.height/2;
+   if(cdp)await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x,y}]});
+   else {await page.mouse.move(x,y);await page.mouse.down();}
+   if(move){if(cdp)await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:x+35,y}]});else await page.mouse.move(x+35,y);}
+   if(cancel){if(cdp)await cdp.send('Input.dispatchTouchEvent',{type:'touchCancel',touchPoints:[]});else await card(id).dispatchEvent('pointercancel',{pointerId:1});}
+   await page.clock.runFor(650);
+   // Keep holding after the mode change; release must not become a click elsewhere.
+   await page.clock.runFor(700);
+   if(!cancel&&cdp)await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+   else if(!cdp)await page.mouse.up();
+ };
+ await pressPortrait(1,{move:true});assert.equal(await page.getByRole('button',{name:'Exit selection mode'}).count(),0);assert.equal(validationCount,0);
+ await pressPortrait(1,{cancel:true});assert.equal(await page.getByRole('button',{name:'Exit selection mode'}).count(),0);assert.equal(validationCount,0);
+ await pressPortrait(1);await page.getByRole('button',{name:'Exit selection mode'}).waitFor();
+ assert(await page.locator('[data-person-card="1"] input[type=checkbox]').isChecked());
+ assert.equal(await page.locator('.people-grid input:checked').count(),1);assert.equal(validationCount,0);
+ await card(2).click();assert.equal(await page.locator('.people-grid input:checked').count(),2);
+ await pressPortrait(2);await page.getByRole('button',{name:'Select people',exact:true}).waitFor();
+ assert.equal(await page.locator('.people-grid input[type=checkbox]').count(),0);assert.equal(validationCount,0);assert.equal(accounts.qa,null);
  await expectSearch(()=>card(1).click(),'Includes("Maya [#1]")');
  await enterPeople();await page.getByRole('button',{name:'Select people',exact:true}).click();
  assert.equal(await page.locator('.people-grid input[type=checkbox]').count(),3);
@@ -67,6 +90,6 @@ for(const viewport of [{width:1440,height:900},{width:390,height:844}]){
  await action.selectOption('search');assert.equal(await page.getByRole('button',{name:'Select people',exact:true}).count(),1);assert(!('selection' in accounts.qa));
  identity='other';await visit();await enterPeople();assert.equal(await action.inputValue(),'search');assert.equal(await unknown.getAttribute('aria-pressed'),'false');assert.equal(await page.getByRole('button',{name:'Select people',exact:true}).count(),1);
  assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));assert.deepEqual(errors,[]);
- console.log('PASS',viewport.width,'defaults, direct search, multi-select, duplicate names, collections, clearing, edit flow, account persistence and isolation');await page.close();
+ console.log('PASS',viewport.width,'long-press entry/exit, cancelled gestures, no release search, direct search, multi-select, edit flow and account isolation');await page.close();
 }
 }finally{await browser.close();server.close();}})().catch(e=>{console.error(e);process.exitCode=1;server.close();});

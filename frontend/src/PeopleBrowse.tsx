@@ -61,7 +61,7 @@ export default function PeopleBrowse({browse}:{browse:ReturnType<typeof usePeopl
   <div className="people-browse-heading"><h2><Users size={20} aria-hidden="true"/>Browse people</h2><span role="status">{visible.length.toLocaleString()} of {(knownCount+unknownCount).toLocaleString()} people / groups</span></div>
   <div className="people-browse-controls">
    <label className="people-sort">Action<select aria-label="People action" value={preferences.action} onChange={e=>browse.action(e.target.value as 'search'|'edit')}><option value="search">Search photos</option><option value="edit">Edit people</option></select></label>
-   {preferences.action==='search'&&<button className="outline" aria-pressed={browse.selectionMode} onClick={()=>browse.selection(!browse.selectionMode)}>{browse.selectionMode?'Exit selection mode':'Select people'}</button>}
+   {preferences.action==='search'&&<button className="outline people-selection-toggle" aria-pressed={browse.selectionMode} onClick={()=>browse.selection(!browse.selectionMode)}>{browse.selectionMode?'Exit selection mode':'Select people'}</button>}
    <div className="people-kind-switch" role="group" aria-label="Show people">
     <button aria-label="Known people" aria-pressed={preferences.known} disabled={preferences.known&&!preferences.unknown} title={preferences.known&&!preferences.unknown?'Enable Unknown people to show both groups':'Show or hide named people'} onClick={()=>browse.toggle('known')}>Known people<span>{knownCount.toLocaleString()}</span></button>
     <button aria-label="Unknown people" aria-pressed={preferences.unknown} disabled={preferences.unknown&&!preferences.known} title={preferences.unknown&&!preferences.known?'Enable Known people to show both groups':'Show or hide unnamed groups and unassigned faces'} onClick={()=>browse.toggle('unknown')}>Unknown people<span>{unknownCount.toLocaleString()}</span></button>
@@ -72,7 +72,7 @@ export default function PeopleBrowse({browse}:{browse:ReturnType<typeof usePeopl
     <button aria-label="Descending people order" aria-pressed={direction==='desc'} onClick={()=>browse.direction('desc')}><ArrowDown size={16} aria-hidden="true"/>{preferences.sort==='name'?'Z–A':'Largest first'}</button>
    </div>
   </div>
-  <p>{preferences.action==='search'?(browse.selectionMode?'Select people, then find photos containing all of them.':'Click a portrait to see matching photos in Library.'):'Click a portrait to name, review or edit that person.'}</p>
+  <p>{preferences.action==='search'?'Click a portrait to search. Long-press to enter or exit selection mode; Find photos matches everyone selected.':'Click a portrait to name, review or edit that person.'}</p>
   <p>Enable both groups to show everyone. Face count is the number of faces assigned to each person or group. Choices are saved to your account across devices.</p>
   {browse.saveError&&<p role="alert">{browse.saveError}</p>}
  </section>;
