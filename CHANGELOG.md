@@ -1,3 +1,10 @@
+## 2026-11-24 — Remembered mobile passkey sign-in
+
+- When sign-in is needed on a remembered mobile browser, try the account's enabled passkey once automatically. Existing authenticated sessions open normally.
+- After a cancelled or failed device check, offer retry, password sign-in for the same account, or sign-out/account switching. Cancel outstanding device prompts before changing sign-in methods.
+- Explicit sign-out clears the remembered account so it does not immediately sign back in. Guest, new devices, desktop browsers and accounts without passkeys retain password sign-in.
+- Validate automatic sign-in with a virtual platform authenticator, fallback and account-switch flows, and the existing account-security tests. Physical Face ID/fingerprint behavior depends on the phone and browser.
+
 ## 2026-11-24 — Restore responsive loading on removable storage
 
 - Keep SQLite temporary sorting in memory while catalogue, originals and caches remain on the configured drive. The production gallery request improved from 31–37 seconds to 6.7 seconds.

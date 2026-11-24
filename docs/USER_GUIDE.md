@@ -3,6 +3,25 @@
 A new installation starts empty. Add your own original folders through Library tools.
 Installation paths and optional hostnames are local configuration, independent of the developer's computer.
 
+## Mobile sign-in
+
+Sign in on your phone through the secure website. To enable device verification,
+open Account settings, enter your current password, and choose **Enable Face ID /
+fingerprint**. The phone handles the biometric check or screen-lock PIN; the
+library does not receive your biometric data.
+
+When your session expires, the same mobile browser remembers your last account
+and attempts its enabled passkey once. An existing signed-in session opens the
+library normally. If the phone cannot verify you, choose **Try Face ID /
+fingerprint again**, **Use password**, or **Sign out / switch user**. Password
+fallback keeps your account selected. Switching users clears the remembered
+account; the next successful sign-in remembers the new user.
+
+Explicit sign-out does not immediately sign you back in. A new browser, cleared
+browser storage, Guest, or an account without a passkey uses the password screen.
+Some browsers require a tap to open the device prompt; the passkey button remains
+available if an automatic attempt is declined.
+
 ## Register and manage Databases
 
 Open **Library tools → Databases, Sources & Albums → + Add Database**. Enter an
