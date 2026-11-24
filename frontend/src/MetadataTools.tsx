@@ -57,7 +57,15 @@ export function MetadataEditor({query='',ids=[],count,onSaved,onClose}:{query?:s
 export default function MetadataTools({query,selected,selecting,onSelecting,onSelectLoaded,onClear,count,onSaved,revision}:{query:string;selected:string[];selecting:boolean;onSelecting:(v:boolean)=>void;onSelectLoaded:()=>void;onClear:()=>void;count:number;onSaved:()=>void;revision:number}){
   const [editing,setEditing]=useState(false),[target,setTarget]=useState('matching'),[history,setHistory]=useState<{id:number;description:string;created:string}[]>([]),[error,setError]=useState(''),[busy,setBusy]=useState(false);
   const refresh=()=>request('/metadata/history').then(setHistory).catch(e=>setError(e.message));
-  useEffect(()=>{void refresh();},[revision]);
+  useEffect(()=>{
+    if(!selecting)return;
+    const controller=new AbortController();
+    fetch('/api/metadata/history',{signal:controller.signal}).then(async r=>{
+      if(!r.ok)throw Error('Could not load edit history');
+      return r.json();
+    }).then(setHistory).catch(e=>{if(e.name!=='AbortError')setError(e.message);});
+    return()=>controller.abort();
+  },[revision,selecting]);
   if(!selecting)return null;
   return <div className="metadata-tools"><div className="metadata-actions"><button aria-pressed={selecting} onClick={()=>onSelecting(!selecting)}>{selecting?'Cancel selection':'Select photos & videos'}</button>{selecting&&<><span>{selected.length} selected</span><SelectionExport ids={selected}/><button onClick={onSelectLoaded}>Select loaded results</button><button onClick={onClear}>Clear selection</button></>}{selecting&&<button className="primary" onClick={()=>{setTarget(selected.length?'selected':'matching');setEditing(!editing);}}>{editing?'Close date/location editor':'Edit dates & locations'}</button>}{selecting&&history.length>0&&<button disabled={busy} onClick={async()=>{setBusy(true);setError('');try{await request('/metadata/undo/'+history[0].id,{});onSaved();void refresh();}catch(e){setError(e instanceof Error?e.message:String(e));}finally{setBusy(false);}}}>Undo last date/location edit</button>}</div>{error&&<p role="alert" className="error">{error}</p>}{selecting&&editing&&<><label>Edit target<select aria-label="Metadata edit target" value={target} onChange={e=>setTarget(e.target.value)}><option value="matching">All {count.toLocaleString()} matching results</option><option value="selected" disabled={!selected.length}>{selected.length} selected photos &amp; videos</option></select></label><MetadataEditor key={target} query={query} ids={target==='selected'?selected:[]} count={target==='selected'?selected.length:count} onSaved={()=>{onSaved();void refresh();}} onClose={()=>setEditing(false)}/></>}</div>;
 }

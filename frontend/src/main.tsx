@@ -329,6 +329,7 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
     [total, setTotal] = useState(0),
     [loading, setLoading] = useState(true),
     [resultsLoading, setResultsLoading] = useState(true),
+    [resultsFailed, setResultsFailed] = useState(false),
     [status, setStatus] = useState<Status | null>(null);
   const [people, setPeople] = useState<Person[]>([]),
     [group, setGroup] = useState<number | null>(null),
@@ -532,6 +533,7 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
   };
   useEffect(() => {
     generation.current++;
+    setResultsFailed(false);
     if (!scope.length&&!databaseScope&&!sourceScope) {
       setItems([]);
       setTotal(0);
@@ -540,10 +542,15 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
       return;
     }
     let active = true;
+    const controller = new AbortController();
+    let requestTimeout: ReturnType<typeof setTimeout> | undefined;
     setLoading(true);
     setResultsLoading(true);
+    setError("");
     const timer = setTimeout(() => {
-      api<{ items: Media[]; total: number }>("/media?" + query())
+      requestTimeout = setTimeout(() => controller.abort(), 30000);
+      fetch("/api/media?" + query(), {signal:controller.signal})
+        .then(r=>readApiResponse<{ items: Media[]; total: number }>(r))
         .then((r) => {
           if (active) {
             setItems(r.items);
@@ -552,16 +559,19 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
         })
         .catch((e) => {
           if (active) {
-            setError(e.message);
+            setError(e.name === "AbortError" ? "Loading results took more than 30 seconds. Please retry; the library server may be busy." : e.message);
+            setResultsFailed(true);
             setItems([]);
             setTotal(0);
           }
         })
-        .finally(() => {if(active){setLoading(false);setResultsLoading(false);}});
+        .finally(() => {clearTimeout(requestTimeout);if(active){setLoading(false);setResultsLoading(false);}});
     }, 180);
     return () => {
       active = false;
       clearTimeout(timer);
+      clearTimeout(requestTimeout);
+      controller.abort();
     };
   }, [
     scope,
@@ -1351,6 +1361,7 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
         {error && (
           <div role="alert" className="error">
             {error}
+            {resultsFailed&&<button onClick={()=>setRevision(v=>v+1)}>Retry loading results</button>}
             <button aria-label="Dismiss error" onClick={() => setError("")}>
               <X size={18} />
             </button>
@@ -1361,7 +1372,6 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
             {(albumScope||sourceScope||databaseScope)&&<p className="library-album-scope">Browsing {albumScope?(sources.find(s=>s.album_id===albumScope)?.album||'selected album'):'selected source'} <button onClick={()=>{setAlbumScope('');setSourceScope('');setDatabaseScope('');setIncludeChildren(false);setScope(phoneNames);setAlbums([]);}}>Show all my sources</button></p>}
             <UnifiedSearch onSearchComplete={()=>{setSearchOpen(false);setDisplayOptionsOpen(false);requestAnimationFrame(()=>{document.querySelector('main.library-workspace-page')?.scrollTo({top:0});const gallery=document.querySelector<HTMLElement>('.unified-gallery-scroll');gallery?.focus({preventScroll:true});});}} searchOpen={searchOpen} onCloseSearch={()=>{setSearchOpen(false);document.querySelector<HTMLButtonElement>('[aria-label="Search library"]')?.focus();}} sourceSelection={scope} onSourceChange={(selected)=>{setDatabaseScope("");setSourceScope("");setIncludeChildren(false);setAlbumScope("");setAlbums([]);setResultsLoading(true);setScope(selected);}} resultsLoading={resultsLoading} people={people} sources={sources} expression={expression} query={query().toString()} onApply={(value) => {
               void recordProfileSearch(profile.id,value,scope).catch(()=>setProfileSaveError("Your search ran, but its history could not be saved."));
-              setResultsLoading(true);
               setAlbums([]);setAlbumScope("");setGeo(emptyGeo);setQ("");setPeopleFilter([]);setStart("");setEnd("");setKind("");setOrientation("");setExpression(value);
             }}>
               {(mediaControl,sourceControl)=><>
@@ -1390,6 +1400,12 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
               {sortBy==='file'&&<p className="metadata-note">Sorting by filesystem timestamp. Timeline groups still describe capture dates; missing capture dates stay unknown.</p>}
               {loading && !items.length ? (
                 <div className="gallery-loading-space" aria-hidden="true"/>
+              ) : resultsFailed ? (
+                <div className="empty">
+                  <Images size={36} />
+                  <h2>Results could not be loaded</h2>
+                  <p>Your library has not been cleared. Retry using the button above.</p>
+                </div>
               ) : !items.length ? (
                 <div className="empty">
                   <Images size={36} />

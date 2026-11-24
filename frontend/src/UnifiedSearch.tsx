@@ -261,6 +261,7 @@ export default function UnifiedSearch({
   }
   useEffect(() => {void loadPlaces().catch(()=>{});}, []);
   useEffect(() => {
+    if(panel !== "Map")return;
     let active = true;
     const timer = window.setTimeout(() => {
       void preloadMapBoundaries().catch(() => {});

@@ -107,6 +107,7 @@ for name in filter(None, (value.strip().lower() for value in os.environ.get("DAH
 
 @app.middleware("http")
 async def trusted_hosts(request: Request, call_next):
+    request_started = time.perf_counter()
     host = request.headers.get("host", "").split(":")[0].lower()
     if host not in allowed_hosts:
         return JSONResponse(
@@ -129,6 +130,9 @@ async def trusted_hosts(request: Request, call_next):
         denied.headers["Cache-Control"] = "no-store"
         return denied
     response = await call_next(request)
+    elapsed = time.perf_counter() - request_started
+    if elapsed >= 1:
+        logging.getLogger(__name__).warning("Slow request path=%s status=%s seconds=%.3f", request.url.path, response.status_code, elapsed)
     if request.url.path.startswith("/api/"):
         response.headers["Cache-Control"] = "private, no-store"
     if request.method == "GET" and response.status_code in (200, 206) and request.query_params.get("activity") == "download" and not request.headers.get("range"):

@@ -18,6 +18,28 @@ def apply(api, body, params=None):
     return p.json(),result.json()
 
 
+def test_history_index_preserves_existing_edits_and_tracks_undo(client):
+    api, core = client
+    with core.db() as c:
+        c.execute('DROP INDEX actions_metadata_history')
+        expected = []
+        for i in range(25):
+            identity = c.execute('INSERT INTO actions(description,previous) VALUES(?,?)',
+                                 ('Legacy edit', json.dumps({'metadata': []}))).lastrowid
+            expected.append(identity)
+        c.execute('INSERT INTO actions(description,previous) VALUES(?,?)',
+                  ('Unrelated large action', json.dumps({'faces': 'x' * 1000000})))
+        c.execute('INSERT INTO actions(description,previous) VALUES(?,?)',
+                  ('Not a metadata edit', json.dumps({'metadata': {}})))
+    core.init()
+    assert [r['id'] for r in api.get('/api/metadata/history').json()] == expected[::-1][:20]
+    with core.db() as c:
+        plan = c.execute("EXPLAIN QUERY PLAN SELECT id,description,created FROM actions WHERE undone=0 AND json_type(previous,'$.metadata')='array' ORDER BY id DESC LIMIT 20").fetchall()
+        assert any('actions_metadata_history' in r[3] for r in plan)
+        c.execute('UPDATE actions SET undone=1 WHERE id=?', (expected[-1],))
+    assert [r['id'] for r in api.get('/api/metadata/history').json()] == expected[-2::-1][:20]
+
+
 def test_lazy_migration_keeps_all_existing_records_and_annotations(client):
     api,core=client
     with core.db() as c:

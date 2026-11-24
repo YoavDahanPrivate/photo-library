@@ -47,6 +47,8 @@ def migrate(c):
         payload TEXT NOT NULL,updated_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS metadata_previews(
         id TEXT PRIMARY KEY,payload TEXT NOT NULL,evidence TEXT NOT NULL,created TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS actions_metadata_history ON actions(id DESC)
+        WHERE undone=0 AND json_type(previous,'$.metadata')='array';
     """)
     for event in ("INSERT", "UPDATE", "DELETE"):
         c.execute(f"CREATE TRIGGER IF NOT EXISTS clock_overrides_{event} AFTER {event} ON media_overrides BEGIN UPDATE catalogue_clock SET revision=revision+1 WHERE id=1; END")

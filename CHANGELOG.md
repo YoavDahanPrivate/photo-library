@@ -1,3 +1,11 @@
+## 2026-11-24 — Restore responsive loading on removable storage
+
+- Keep SQLite temporary sorting in memory while catalogue, originals and caches remain on the configured drive. The production gallery request improved from 31–37 seconds to 6.7 seconds.
+- Index metadata edit history and load it only when selection controls are opened; load map summaries only when the map is opened.
+- Cancel superseded gallery requests, provide a 30-second timeout with Retry, and distinguish failed loads from an empty library.
+- Log slow backend request timings and add regression coverage for history indexing, desktop/mobile loading, map activation and timeout recovery.
+- Validated metadata, catalogue, duplicate-filtering and pagination tests, frontend build, desktop/mobile browser tests, and the deployed public release.
+
 ## 2026-11-14 — Search, People browsing, accounts and White theme
 
 - Wrap long search choices, show person thumbnails, and accept whole-month searches such as August 2024 or Aug 2024.

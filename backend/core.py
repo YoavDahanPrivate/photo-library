@@ -30,6 +30,10 @@ def db():
     path.parent.mkdir(parents=True, exist_ok=True)
     c = sqlite3.connect(path, timeout=30)
     c.row_factory = sqlite3.Row
+    # Window queries and GROUP BY otherwise spill temporary sort files onto the
+    # removable drive selected by the portable launcher's TEMP/TMP settings.
+    # Keep scratch work in memory; catalogue and journal writes remain on disk.
+    c.execute("PRAGMA temp_store=MEMORY")
     from .geo import distance_km
 
     c.create_function("distance_km", 4, distance_km, deterministic=True)
