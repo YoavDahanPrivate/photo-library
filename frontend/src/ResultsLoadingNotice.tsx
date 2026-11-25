@@ -1,6 +1,6 @@
 import React,{useLayoutEffect,useState} from 'react';
 
-export default function ResultsLoadingNotice({busy}:{busy:boolean}){
+export default function ResultsLoadingNotice({busy,sourcesReady=true}:{busy:boolean;sourcesReady?:boolean}){
  const [position,setPosition]=useState<{top:number;center:number}|null>(null);
  useLayoutEffect(()=>{
    const header=document.querySelector('.library-topbar');
@@ -13,7 +13,7 @@ export default function ResultsLoadingNotice({busy}:{busy:boolean}){
  return <div className="results-loading-anchor results-loading-floating" style={{'--loading-top':position.top+'px','--loading-center':position.center+'px'} as React.CSSProperties}>
    <div className="results-loading-banner" role="status" aria-live="polite">
      <span className="results-loading-spinner" aria-hidden="true"/>
-     <div><strong>{busy?'Preparing your search…':'Results loading…'}</strong><span>{busy?'Checking your search criteria':'Updating photos and videos for your search'}</span></div>
+     <div><strong>{!sourcesReady?'Loading your sources…':busy?'Preparing your search…':'Results loading…'}</strong><span>{!sourcesReady?'Finding your photo collections and restoring your selection':busy?'Checking your search criteria':'Updating photos and videos for your search'}</span></div>
      <div className="results-loading-progress" aria-hidden="true"/>
    </div>
  </div>;

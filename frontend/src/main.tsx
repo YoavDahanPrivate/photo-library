@@ -307,6 +307,8 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
     [scope, setScope] = useState<string[]>([]),
     [albums, setAlbums] = useState<string[]>([]);
   const [sourcesReady,setSourcesReady]=useState(false);
+  const [sourcesError,setSourcesError]=useState("");
+  const [sourceRetry,setSourceRetry]=useState(0);
   const [databaseScope,setDatabaseScope]=useState("");
   const [sourceScope,setSourceScope]=useState("");
   const [albumScope,setAlbumScope]=useState("");
@@ -395,6 +397,7 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
   }, [editingFace]);
   const phoneNames = Array.from(new Set(sources.map((s) => s.phone)));
   useEffect(() => {
+    setSourcesError("");
     api<Source[]>("/sources")
       .then((s) => {
         setSources(s);
@@ -414,7 +417,7 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
         setScope(matched?Array.from(new Set(matched)):saved?saved.filter(v=>available.includes(v)):available);
         setSourcesReady(true);
       })
-      .catch((e) => setError(e.message));
+      .catch((e) => {setSourcesError(e.message);setError("Could not load your sources. Please retry.");});
     const update = () =>
       api<Status>("/status")
         .then(s=>{setStatus(s);setConnectionError("");void api<typeof liveSync>("/sync/status").then(setLiveSync).catch(()=>{});})
@@ -422,7 +425,7 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
     update();
     const timer = setInterval(update, 5000);
     return () => clearInterval(timer);
-  }, []);
+  }, [sourceRetry]);
   useEffect(() => {
     let active = true;
     api<typeof suggestions>("/people/suggestions")
@@ -534,6 +537,7 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
   useEffect(() => {
     generation.current++;
     setResultsFailed(false);
+    if (!sourcesReady) { setLoading(!sourcesError);setResultsLoading(!sourcesError);setResultsFailed(!!sourcesError);return; }
     if (!scope.length&&!databaseScope&&!sourceScope) {
       setItems([]);
       setTotal(0);
@@ -574,6 +578,8 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
       controller.abort();
     };
   }, [
+    sourcesReady,
+    sourcesError,
     scope,
     albums,
     databaseScope,
@@ -994,7 +1000,7 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
   const groups: Record<string, Media[]> = {};
   items.forEach((m) => {
     const day =
-      view === "all"
+      view === "albums" ? m.phone + " · " + (m.album || "No album") : view === "all"
         ? "All moments"
         : m.taken
           ? m.taken.slice(0, view === "years" ? 4 : view === "months" ? 7 : 10)
@@ -1361,7 +1367,7 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
         {error && (
           <div role="alert" className="error">
             {error}
-            {resultsFailed&&<button onClick={()=>setRevision(v=>v+1)}>Retry loading results</button>}
+            {resultsFailed&&<button onClick={()=>{if(sourcesError){setError("");setSourceRetry(v=>v+1);}else setRevision(v=>v+1);}}>Retry loading results</button>}
             <button aria-label="Dismiss error" onClick={() => setError("")}>
               <X size={18} />
             </button>
@@ -1370,7 +1376,7 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
         {settingsOpen ? <SyncSettings peopleMaintenance={peopleMaintenance} peopleAttention={peopleAttention} onBrowseAlbum={(databaseId,sourceId,albumId)=>{setDatabaseScope(databaseId);setIncludeChildren(false);setSourceScope(sourceId);setAlbums([]);setAlbumScope(albumId);setSettingsOpen(false);setPage("library");setResultsLoading(true);}} onPeopleChanged={()=>setRevision(v=>v+1)} onClose={() => {setSettingsOpen(false);setPage("library");}} hideFormatDuplicates={hideFormatDuplicates} onHideFormatDuplicates={setHideFormatDuplicates} /> : page === "library" ? (
           <>
             {(albumScope||sourceScope||databaseScope)&&<p className="library-album-scope">Browsing {albumScope?(sources.find(s=>s.album_id===albumScope)?.album||'selected album'):'selected source'} <button onClick={()=>{setAlbumScope('');setSourceScope('');setDatabaseScope('');setIncludeChildren(false);setScope(phoneNames);setAlbums([]);}}>Show all my sources</button></p>}
-            <UnifiedSearch onSearchComplete={()=>{setSearchOpen(false);setDisplayOptionsOpen(false);requestAnimationFrame(()=>{document.querySelector('main.library-workspace-page')?.scrollTo({top:0});const gallery=document.querySelector<HTMLElement>('.unified-gallery-scroll');gallery?.focus({preventScroll:true});});}} searchOpen={searchOpen} onCloseSearch={()=>{setSearchOpen(false);document.querySelector<HTMLButtonElement>('[aria-label="Search library"]')?.focus();}} sourceSelection={scope} onSourceChange={(selected)=>{setDatabaseScope("");setSourceScope("");setIncludeChildren(false);setAlbumScope("");setAlbums([]);setResultsLoading(true);setScope(selected);}} resultsLoading={resultsLoading} people={people} sources={sources} expression={expression} query={query().toString()} onApply={(value) => {
+            <UnifiedSearch onSearchComplete={()=>{setSearchOpen(false);setDisplayOptionsOpen(false);requestAnimationFrame(()=>{document.querySelector('main.library-workspace-page')?.scrollTo({top:0});const gallery=document.querySelector<HTMLElement>('.unified-gallery-scroll');gallery?.focus({preventScroll:true});});}} searchOpen={searchOpen} onCloseSearch={()=>{setSearchOpen(false);document.querySelector<HTMLButtonElement>('[aria-label="Search library"]')?.focus();}} sourceSelection={scope} onSourceChange={(selected)=>{setDatabaseScope("");setSourceScope("");setIncludeChildren(false);setAlbumScope("");setAlbums([]);setResultsLoading(true);setScope(selected);}} sourcesReady={sourcesReady} resultsLoading={resultsLoading} people={people} sources={sources} expression={expression} query={query().toString()} onApply={(value) => {
               void recordProfileSearch(profile.id,value,scope).catch(()=>setProfileSaveError("Your search ran, but its history could not be saved."));
               setAlbums([]);setAlbumScope("");setGeo(emptyGeo);setQ("");setPeopleFilter([]);setStart("");setEnd("");setKind("");setOrientation("");setExpression(value);
             }}>
@@ -1378,25 +1384,14 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
               {headerControls&&createPortal(<div className="gallery-controls" aria-label="Gallery display controls">
               <div className="library-options-heading"><strong>View options</strong><button onClick={()=>{setDisplayOptionsOpen(false);document.querySelector<HTMLButtonElement>('.library-options-toggle')?.focus();}}>Done</button></div>
               {sourceControl}
-              <select aria-label="Timeline grouping" value={view} onChange={e=>setView(e.target.value)}>{['years','months','days','all'].map(v=><option key={v} value={v}>{v==='all'?'All photos':v[0].toUpperCase()+v.slice(1)}</option>)}</select>
+              <fieldset className="view-option-group"><legend>Grouped by</legend><div className="view-option-choices">{[['years','Years'],['months','Months'],['days','Days'],['all','None'],['albums','Albums']].map(([value,label])=><label key={value}><input type="radio" name="view-grouping" checked={view===value} onChange={()=>setView(value)}/>{label}</label>)}</div></fieldset>
               {mediaControl}
-              <details className="library-sort-options"><summary>Sort options</summary><div className="library-sort-menu"><select className="gallery-media-filter gallery-sort-basis" aria-label="Gallery sort basis" title="Sort by" value={sortBy} onChange={e=>setSortBy(e.target.value)}><option value="capture">Sort by: Capture date</option><option value="file">Sort by: File date</option></select>
-              <label className="sort-control">
-                <span className="sort-label">Date order</span>
-                <select
-                  aria-label="Result date order"
-                  value={order}
-                  onChange={(e) => setOrder(e.target.value)}
-                >
-                  <option value="desc">Newest first</option>
-                  <option value="asc">Oldest first</option>
-                </select>
-              </label></div></details>
+              <fieldset className="view-option-group"><legend>Sort order</legend><div className="view-option-choices">{[['asc','Ascending'],['desc','Descending']].map(([value,label])=><label key={value}><input type="radio" name="view-order" checked={order===value} onChange={()=>setOrder(value)}/>{label}</label>)}</div><label className="view-sort-basis">Date used for sorting<select aria-label="Gallery sort basis" value={sortBy} onChange={e=>setSortBy(e.target.value)}><option value="capture">Capture date</option><option value="file">File date</option></select></label></fieldset>
                 <span className="result-count" aria-live="polite">
                   {total.toLocaleString()} moments
                 </span>
               </div>,headerControls)}
-              <MetadataTools query={query().toString()} selected={selectedMedia} selecting={selectingMedia} onSelecting={value=>{setSelectingMedia(value);if(!value)setSelectedMedia([]);}} onSelectLoaded={()=>setSelectedMedia(items.map(m=>m.id))} onClear={()=>setSelectedMedia([])} count={total} revision={revision} onSaved={metadataSaved}/>
+              <MetadataTools loadedCount={items.length} query={query().toString()} selected={selectedMedia} selecting={selectingMedia} onSelecting={value=>{setSelectingMedia(value);if(!value)setSelectedMedia([]);}} onSelectLoaded={()=>setSelectedMedia(items.map(m=>m.id))} onClear={()=>setSelectedMedia([])} count={total} revision={revision} onSaved={metadataSaved}/>
               {sortBy==='file'&&<p className="metadata-note">Sorting by filesystem timestamp. Timeline groups still describe capture dates; missing capture dates stay unknown.</p>}
               {loading && !items.length ? (
                 <div className="gallery-loading-space" aria-hidden="true"/>
@@ -1436,7 +1431,7 @@ function App({profile,onSwitchProfile}:{profile:Profile;onSwitchProfile:()=>void
                         <h2>
                           {day === "Unknown date" ||
                           day === "All moments" ||
-                          view === "years" || day.length<10
+                          view === "albums" || view === "years" || day.length<10
                             ? day
                             : new Date(
                                 day +

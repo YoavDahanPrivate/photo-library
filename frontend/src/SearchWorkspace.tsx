@@ -573,6 +573,7 @@ export function GeoMap({
     pointer: number;
     boxZoom: boolean;
   } | null>(null);
+  const [areaStart,setAreaStart] = useState<{lat:number;lon:number}|null>(null);
   const pointers = useRef(new Map<number,{x:number;y:number}>());
   const pinch = useRef<{view:View;mid:{x:number;y:number};distance:number}|null>(null);
   const [pinchLevel,setPinchLevel] = useState<number|null>(null);
@@ -826,6 +827,7 @@ export function GeoMap({
             onClick={() => {
               if(tap.current){window.clearTimeout(tap.current.timer);tap.current=null;}
               setMode(m);
+              setAreaStart(null);
               setDraft(null);
               drag.current = null;
             }}
@@ -833,7 +835,7 @@ export function GeoMap({
             {m === "zoom" && <ZoomIn size={16} aria-hidden="true" />} {label}
           </button>
         ))}
-        <button onClick={() => { if(tap.current){window.clearTimeout(tap.current.timer);tap.current=null;} pointers.current.clear();pinch.current=null;setPinchLevel(null);blockTap.current=false; drag.current = null; setDraft(null); setMode("pan"); setFields({south:"",north:"",west:"",east:""}); onGeo({ ...geo, includes: [], excludes: [] }); fit(); setMessage("Map reset. Press Apply search to update the gallery."); }}>Clear areas</button>
+        <button onClick={() => { if(tap.current){window.clearTimeout(tap.current.timer);tap.current=null;} pointers.current.clear();pinch.current=null;setPinchLevel(null);blockTap.current=false; drag.current = null; setDraft(null); setMode("pan"); setAreaStart(null); setFields({south:"",north:"",west:"",east:""}); onGeo({ ...geo, includes: [], excludes: [] }); fit(); setMessage("Map reset. Press Apply search to update the gallery."); }}>Clear areas</button>
       </div>
       <div className="map-area-chips" aria-label="Selected map areas">
         {(["includes", "excludes"] as const).flatMap(key => geo[key].map((area, i) => <button key={key + area.id} onClick={() => onGeo({...geo, [key]:geo[key].filter(a => a.id !== area.id)})} aria-label={`Remove ${key === "includes" ? "included" : "excluded"} area ${i+1}`}>{key === "includes" ? "Include" : "Exclude"} {i+1} ×</button>))}
@@ -845,21 +847,21 @@ export function GeoMap({
           ? "Drag to move. Zooming or panning never changes your search."
           : mode === "select"
             ? "Select a marker to include its location. Remove selections using the chips above."
-            : `Drag a rectangle to ${mode === "add" ? "include" : "exclude"} an area, or use the coordinate controls below.`}
+            : areaStart ? "First corner selected. Tap the opposite corner to finish the area." : `Tap two opposite corners or drag a rectangle to ${mode === "add" ? "include" : "exclude"} an area.`}
       </p>
-      <div className={"interactive-map " + (mode === "zoom" ? "zoom-tool-active" : "")} ref={surface}
+      <div className={"interactive-map " + (mode === "zoom" ? "zoom-tool-active" : mode === "add" || mode === "exclude" ? "area-tool-active" : "")} ref={surface}
         style={{cursor:mode === "zoom" ? (altZoom ? "zoom-out" : "zoom-in") : mode === "pan" ? "grab" : "crosshair"}}
         onClickCapture={e=>{if(Date.now()<suppressClickUntil.current){e.preventDefault();e.stopPropagation();}}}
         onPointerDown={e=>{
           if((e.target as Element).closest(".geo-zoom") || (e.pointerType === "mouse" && e.button !== 0))return;
           e.preventDefault();
           const pos=cursor(e);pointers.current.set(e.pointerId,pos);
-          if(!(e.target as Element).closest(".geo-marker"))e.currentTarget.setPointerCapture(e.pointerId);
+          if(mode==="add" || mode==="exclude" || !(e.target as Element).closest(".geo-marker"))e.currentTarget.setPointerCapture(e.pointerId);
           if(pointers.current.size===2){
             if(tap.current){window.clearTimeout(tap.current.timer);tap.current=null;}
             const [a,b]=[...pointers.current.values()];
             pinch.current={view,mid:{x:(a.x+b.x)/2,y:(a.y+b.y)/2},distance:Math.max(1,Math.hypot(a.x-b.x,a.y-b.y))};
-            blockTap.current=true;setPinchLevel(level);drag.current=null;setDraft(null);return;
+            blockTap.current=true;setPinchLevel(level);drag.current=null;setDraft(null);setAreaStart(null);return;
           }
           if(pointers.current.size===1){blockTap.current=false;drag.current={...pos,view,pointer:e.pointerId,boxZoom:mode==="zoom" && e.pointerType==="mouse" && !e.altKey && !e.ctrlKey};}
         }}
@@ -896,13 +898,21 @@ export function GeoMap({
                 if(previous)setView(v=>zoomAt(v,previous,previous,.5,mapHeight));
                 tap.current={...p,at:Date.now(),timer:window.setTimeout(()=>{tap.current=null;setView(v=>zoomAt(v,p,p,.5,mapHeight));},320)};
               }
-            }else if((mode==="add" || mode==="exclude") && Math.abs(p.x-start.x)>5 && Math.abs(p.y-start.y)>5)add(rectangle(p.x,p.y,start));
+            }else if(mode==="add" || mode==="exclude"){
+              suppressClickUntil.current=Date.now()+500;
+              if(moved>5 && Math.abs(p.x-start.x)>5 && Math.abs(p.y-start.y)>5){setAreaStart(null);add(rectangle(p.x,p.y,start));}
+              else if(moved<=5){
+                const corner=unproject(p.x,p.y,start.view);
+                if(areaStart){add({id:areaId(),south:Math.min(areaStart.lat,corner.lat),north:Math.max(areaStart.lat,corner.lat),west:Math.min(areaStart.lon,corner.lon),east:Math.max(areaStart.lon,corner.lon)});setAreaStart(null);}
+                else setAreaStart(corner);
+              }
+            }
           }
           drag.current=null;setDraft(null);
           if(!pointers.current.size){pinch.current=null;setPinchLevel(null);if(blockTap.current)suppressClickUntil.current=Date.now()+500;blockTap.current=false;}
           if(e.currentTarget.hasPointerCapture(e.pointerId))e.currentTarget.releasePointerCapture(e.pointerId);
         }}
-        onPointerCancel={()=>{pointers.current.clear();pinch.current=null;setPinchLevel(null);blockTap.current=false;drag.current=null;setDraft(null);if(tap.current){window.clearTimeout(tap.current.timer);tap.current=null;}}}
+        onPointerCancel={()=>{setAreaStart(null);pointers.current.clear();pinch.current=null;setPinchLevel(null);blockTap.current=false;drag.current=null;setDraft(null);if(tap.current){window.clearTimeout(tap.current.timer);tap.current=null;}}}
       >
         <svg viewBox={"0 0 1000 " + mapHeight} role="img" aria-label="Offline map of matching photographs. Use map tools or the coordinate form to select areas.">
           <rect width="1000" height={mapHeight} fill="#e5eeef" />
@@ -925,6 +935,7 @@ export function GeoMap({
             {draft && drawRect(draft, mode === "exclude", "draft")}
           </g>
         </svg>
+        {areaStart&&<span className="map-area-start" role="status" aria-label="First area corner selected" style={{left:project(areaStart.lon,areaStart.lat)[0]/10+'%',top:project(areaStart.lon,areaStart.lat)[1]/mapHeight*100+'%'}}/>}
         {Array.from(clusters.entries()).map(([key, points]) => {
           const count = points.reduce((s, p) => s + p.count, 0),
             [x, y] = project(

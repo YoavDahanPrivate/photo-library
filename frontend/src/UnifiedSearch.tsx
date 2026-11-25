@@ -26,6 +26,7 @@ export default function UnifiedSearch({
   expression,
   onApply,
   query,
+  sourcesReady,
   resultsLoading,
   children,
 }: {
@@ -39,6 +40,7 @@ export default function UnifiedSearch({
   expression: string;
   onApply: (value: string) => void;
   query: string;
+  sourcesReady: boolean;
   resultsLoading: boolean;
   children: (mediaControl: ReactNode, sourceControl: ReactNode) => ReactNode;
 }) {
@@ -94,6 +96,7 @@ export default function UnifiedSearch({
     return placeRequest.current;
   }
   const phoneNames = [...new Set(sources.map((s) => s.phone))];
+  const allSourcesSelected = phoneNames.length > 0 && phoneNames.every(name=>sourceSelection.includes(name));
   const labels = useMemo(() => {
     const counts = new Map<string, number>();
     people.forEach((p) => {
@@ -671,8 +674,9 @@ export default function UnifiedSearch({
         </section>
       )}
       <div className={"unified-gallery-scroll"+((resultsLoading||busy)?" results-pending":"")} aria-label="Search results" tabIndex={-1} aria-busy={resultsLoading||busy}>
-        {(resultsLoading||busy) && <ResultsLoadingNotice busy={busy}/>}
-        {children(<select className="gallery-media-filter" aria-label="Show photos or videos" value={selectedMediaFilter(expression)} disabled={busy} onChange={e=>void apply(false,e.target.value)}><option value="">Photos &amp; Videos</option><option value="photo">Photos</option><option value="video">Videos</option>{selectedMediaFilter(expression)==="custom"&&<option value="custom" disabled>Custom media filter</option>}</select>, <details className="library-source-picker"><summary>{!sourceSelection.length?'No sources selected':phoneNames.every(n=>sourceSelection.includes(n))?'All my sources':sourceSelection.length===1?sourceSelection[0]:`${sourceSelection.length} sources`}</summary><div className="library-source-menu"><strong>Sources</strong><button disabled={!phoneNames.length} onClick={()=>onSourceChange(phoneNames)}>Show all my sources</button>{phoneNames.map(name=><label key={name}><input type="checkbox" checked={sourceSelection.includes(name)} onChange={()=>onSourceChange(toggle(sourceSelection,name))}/>{name}</label>)}{!phoneNames.length&&<p>No sources available yet.</p>}</div></details>)}
+        {(resultsLoading||busy) && <ResultsLoadingNotice busy={busy} sourcesReady={sourcesReady}/>}
+        {children(<fieldset className="view-option-group" disabled={busy}><legend>Show</legend><div className="view-option-choices">{[['','Photos and Videos'],['photo','Photos'],['video','Videos']].map(([value,label])=><label key={value}><input type="radio" name="view-media" checked={selectedMediaFilter(expression)===value} onChange={()=>void apply(false,value)}/>{label}</label>)}</div>{selectedMediaFilter(expression)==='custom'&&<small>Your search uses a custom media filter.</small>}</fieldset>, <fieldset className="view-option-group" disabled={!sourcesReady}><legend>Sources</legend><div className="view-option-choices source-select-all"><button type="button" aria-pressed={allSourcesSelected} disabled={!phoneNames.length} onClick={()=>onSourceChange(allSourcesSelected?[]:phoneNames)}>All sources</button></div><div className="view-option-choices source-checkboxes">{phoneNames.map(name=><label key={name}><input type="checkbox" checked={sourceSelection.includes(name)} onChange={()=>onSourceChange(toggle(sourceSelection,name))}/>{name}</label>)}</div>{!sourcesReady?<small>Loading your sources…</small>:<>{!sourceSelection.length&&<p className="source-selection-warning" role="alert">Select at least one source to browse your photos and videos.</p>}{!phoneNames.length&&<small>No sources available.</small>}</>}</fieldset>)}
+
       </div>
     </div>
   );

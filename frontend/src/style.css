@@ -3227,3 +3227,36 @@ body:has(.viewer-overlay) .library-topbar{visibility:hidden;pointer-events:none}
 .preview-recovery button {padding:8px 14px;border:1px solid #b6c9c0;border-radius:8px;color:white;background:#263e39;min-height:44px;}
 .people-selection-float .builder-actions button {flex:0 0 auto;min-width:0;}
 .people-grid .person-card {-webkit-tap-highlight-color:transparent;}
+
+/* Consistent view options and selection controls. */
+.library-topbar-actions .library-options-toggle{display:flex;min-width:44px}
+.library-topbar .library-filter-slot{display:none}
+.library-topbar .library-filter-slot.options-open{display:block;position:absolute;top:calc(100% + 8px);right:0;left:auto;width:min(560px,100%);box-sizing:border-box;max-height:70dvh;overflow:auto;overscroll-behavior:contain;padding:16px;background:var(--theme-surface);border:1px solid var(--line);border-radius:18px;box-shadow:0 18px 48px #0002}
+.library-workspace-page .library-filter-slot .gallery-controls{display:flex!important;flex-direction:column;align-items:stretch;gap:16px!important}
+.library-filter-slot .library-options-heading{display:flex;align-items:center;justify-content:space-between;color:var(--ink)}
+.view-option-group{margin:0;padding:0 0 14px;border:0;border-bottom:1px solid var(--line);min-width:0}
+.view-option-group legend{font-size:14px;font-weight:600;color:var(--ink);margin-bottom:8px;padding:0}
+.view-option-choices{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px}
+.view-option-choices label{display:flex;align-items:center;gap:7px;min-height:44px;font-size:14px;cursor:pointer;color:var(--ink)}
+.view-option-choices input{width:18px;height:18px;margin:0;accent-color:var(--green)}
+.view-option-group small,.selection-help{display:block;color:var(--muted);font-size:12px;line-height:1.5;margin:6px 0}
+.view-sort-basis{display:flex;flex-wrap:wrap;align-items:center;gap:10px;font-size:12px;color:var(--muted);margin-top:8px}
+.metadata-tools{padding:16px;margin:12px 0;border:1px solid var(--line);background:var(--theme-surface);border-radius:16px;backdrop-filter:none}
+.selection-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.selection-heading>div{display:grid;gap:4px}.selection-heading span{font-size:13px;color:var(--muted)}
+.selection-controls,.selection-actions{display:flex;flex-wrap:wrap;gap:8px}
+.selection-actions{padding-top:14px;margin-top:14px;border-top:1px solid var(--line)}
+.selection-history{margin-top:12px}
+.metadata-tools button,.view-option-choices button,.library-options-heading button{border:1px solid var(--line)!important;background:var(--theme-surface);color:var(--ink);border-radius:10px;min-height:44px;padding:9px 14px;font-weight:500;display:inline-flex;align-items:center;justify-content:center;gap:8px}
+.metadata-tools button:hover,.view-option-choices button:hover{background:color-mix(in srgb,var(--green) 9%,var(--theme-surface))}
+.metadata-tools button:disabled{opacity:.45;cursor:not-allowed}
+.metadata-tools button:focus-visible,.view-option-choices :focus-visible{outline:2px solid var(--green);outline-offset:2px}
+@media(max-width:760px){.library-topbar .library-filter-slot.options-open{left:0;right:0;width:100%}.selection-actions>button{flex:1 1 140px}.selection-heading strong{font-size:14px}}
+
+.source-checkboxes{margin-top:10px}
+.view-option-choices.source-select-all button[aria-pressed="true"]{background:var(--green);border-color:var(--green)!important;color:#fff;box-shadow:inset 0 2px 3px #0002}
+.source-selection-warning{margin:10px 0 0;padding:10px 12px;border:1px solid var(--line);border-left:3px solid var(--green);border-radius:8px;background:color-mix(in srgb,var(--green) 8%,var(--theme-surface));color:var(--ink);font-size:13px;line-height:1.5}
+
+.interactive-map.area-tool-active{user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+.area-tool-active .geo-marker{pointer-events:none}
+.map-area-start{position:absolute;width:16px;height:16px;border:3px solid white;border-radius:50%;background:var(--green);box-shadow:0 0 0 2px var(--green);transform:translate(-50%,-50%);pointer-events:none}

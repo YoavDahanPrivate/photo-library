@@ -1,3 +1,11 @@
+## 2026-11-25 — Library view controls and touch map selection
+
+- Keep source-loading feedback visible until source preferences are restored; show retryable failures instead of a premature empty gallery.
+- Group Sources, timeline/album grouping, media type and sort order in View options. Make All sources a pressed toggle above the individual choices, and warn when none are selected.
+- Separate selection controls from sharing and metadata actions, with visible button borders and clear labels.
+- Support two-corner taps as well as dragging for included/excluded map areas. Capture drawing gestures on the map, show the first corner, and clear incomplete selections when changing tools or pinching.
+- Validated the frontend build and mobile/desktop Chromium regression tests for delayed/failed sources, source toggles, album grouping, selection actions and map area searches. The reported iPhone home-screen issue was not reproduced directly; the user reported the updated interaction appears to work.
+
 ## 2026-11-24 — Remembered mobile passkey sign-in
 
 - When sign-in is needed on a remembered mobile browser, try the account's enabled passkey once automatically. Existing authenticated sessions open normally.
